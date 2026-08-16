@@ -1,0 +1,55 @@
+{
+  "name": "dsh-panoptic-inquiry",
+  "version": "0.1.0-beta.1",
+  "private": true,
+  "description": "Adaptive research, reproduction, and engineering review mode for DeepSeek Harness",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "src/",
+    "preset/",
+    "scripts/*.ps1",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1-Vast/dsh-panoptic-inquiry.git"
+  },
+  "homepage": "https://github.com/1-Vast/dsh-panoptic-inquiry#readme",
+  "bugs": {
+    "url": "https://github.com/1-Vast/dsh-panoptic-inquiry/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "research",
+    "multi-agent",
+    "reproducibility",
+    "code-review"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

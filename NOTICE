@@ -1,0 +1,10 @@
+Panoptic Inquiry for DeepSeek Harness
+Copyright (c) 2026 1-Vast
+
+The preset composition is adapted from DeepSeek Harness Minimal and Standard
+agent presets and from dsh-anchored-standard. The derived bootstrap,
+compaction, instruction-hint, and on-demand skill files retain their upstream
+MIT notices through LICENSE and THIRD_PARTY_NOTICES.md.
+
+This independent community project is not affiliated with or endorsed by
+DeepSeek or the upstream plugin authors.

@@ -1,0 +1,18 @@
+Panoptic Inquiry deep-performance preset
+Copyright (c) 2026 1-Vast
+
+This preset is adapted from dsh-anchored-standard commits
+4c529273f147083c64632f787f4c4f5303888926 and
+15a99b88a6862e7e0e503d14b0638caa27d14eaa:
+
+  https://github.com/xiaobright/dsh-anchored-standard
+
+That upstream preset derives from DeepSeek Harness commit
+47f943859bef60e4160492346772ded9b24f765a:
+
+  https://github.com/deepseek-ai/deepseek-harness
+
+The projects are distributed under the MIT License. The full permission
+notice is included in this directory's LICENSE file. This independent
+community preset is not affiliated with or endorsed by DeepSeek or the
+upstream plugin authors.

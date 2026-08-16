@@ -1,0 +1,7 @@
+- id: agent-teams
+  config:
+    maxMembers: 3
+
+- insert:
+    - id: panoptic-inquiry
+      name: dsh-panoptic-inquiry
