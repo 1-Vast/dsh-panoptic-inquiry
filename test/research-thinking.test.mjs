@@ -27,17 +27,15 @@ test('does not alter the preset bootstrap assembly', async () => {
   assert.deepEqual(sectionNames(result), ['deployment:persona'])
 })
 
-test('keeps only the compact router for ordinary work', async () => {
+test('adds no mode prompt overhead to ordinary work', async () => {
   const result = await assembleFor('deep-performance', [
     ...baseSections,
     { name: 'agent-teams:usage', text: 'poll forever' },
   ], [message('\u4fee\u590d\u4e00\u4e2a\u666e\u901a\u9519\u8bef')])
-  assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web', 'research-thinking:router'])
-  assert.match(result.sections.at(-1).text, /semantic scope, not by keywords/)
-  assert.match(result.sections.at(-1).text, /private chain-of-thought/)
+  assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web'])
 })
 
-test('hides AgentTeams tools from ordinary work and restores them for deep work', async () => {
+test('exposes AgentTeams only when deep work explicitly needs collaboration', async () => {
   const tools = [{ name: 'bash' }, { name: 'agent_teams_create' }, { name: 'agent_teams_status' }]
   let listener
   apply({ on(name, callback) { if (name === 'system-prompt/assemble') listener = callback } })
@@ -50,7 +48,12 @@ test('hides AgentTeams tools from ordinary work and restores them for deep work'
   const deep = await listener({}, {
     agent: { session: { header: { agentPreset: 'deep-performance' }, events: [message('\u6df1\u5ea6\u7814\u7a76')] } },
   }, async () => ({ sections: baseSections, tools }))
-  assert.deepEqual(deep.tools.map(tool => tool.name), ['bash', 'agent_teams_create', 'agent_teams_status'])
+  assert.deepEqual(deep.tools.map(tool => tool.name), ['bash'])
+
+  const collaborative = await listener({}, {
+    agent: { session: { header: { agentPreset: 'deep-performance' }, events: [message('\u8fdb\u884c\u591a\u667a\u80fd\u4f53\u534f\u540c\u6df1\u5ea6\u7814\u7a76')] } },
+  }, async () => ({ sections: baseSections, tools }))
+  assert.deepEqual(collaborative.tools.map(tool => tool.name), ['bash', 'agent_teams_create', 'agent_teams_status'])
 })
 
 test('enables core evidence rules for literature work', async () => {
@@ -58,8 +61,8 @@ test('enables core evidence rules for literature work', async () => {
   const names = sectionNames(result)
   assert.ok(names.includes('research-thinking:core'))
   assert.ok(!names.includes('research-thinking:innovation-transfer'))
-  assert.match(result.sections.find(item => item.name === 'research-thinking:core').text, /preprint only as a provisional lead/)
-  assert.match(result.sections.find(item => item.name === 'research-thinking:core').text, /specialist or affiliated sub-journals/)
+  assert.match(result.sections.find(item => item.name === 'research-thinking:core').text, /preprints are provisional leads only/)
+  assert.match(result.sections.find(item => item.name === 'research-thinking:core').text, /reputable specialist journals/)
 })
 
 test('enables all gates for innovation work', async () => {
@@ -79,6 +82,30 @@ test('enables evidence and verification for paper review and reproduction', asyn
     assert.ok(names.includes('research-thinking:core'))
     assert.ok(names.includes('research-thinking:verification-audit'))
   }
+})
+
+test('requires scoped and complete evidence before a goal is marked complete', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [message('\u8bf7\u505a\u79d1\u7814\u5ba1\u67e5\u5e76\u7ed9\u51fa\u6700\u7ec8\u7ed3\u8bba')])
+  const audit = result.sections.find(item => item.name === 'research-thinking:verification-audit').text
+  assert.match(audit, /physical split isolation/)
+  assert.match(audit, /clean worktree/)
+  assert.match(audit, /after the last stage/)
+  assert.match(audit, /proxy tests/)
+  assert.match(audit, /not an information-theoretic upper bound/)
+  assert.match(audit, /conditional completion/)
+})
+
+test('keeps injected protocol text within a bounded character budget', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [message('\u8fdb\u884c\u591a\u667a\u80fd\u4f53\u534f\u540c\u7684\u8de8\u9886\u57df\u521b\u65b0\u673a\u5236\u5ba1\u67e5')])
+  const injected = result.sections.filter(item => item.name.startsWith('research-thinking:'))
+  assert.ok(injected.reduce((sum, item) => sum + item.text.length, 0) <= 6500)
+})
+
+test('fast-tracks a deep request through the bootstrap assembly', async () => {
+  const result = await assembleFor('deep-performance', [
+    { name: 'deployment:persona', text: 'minimal persona' },
+  ], [message('\u8fdb\u884c\u6df1\u5ea6\u7814\u7a76')])
+  assert.ok(sectionNames(result).includes('research-thinking:core'))
 })
 
 test('enables verification without literature overhead for a GPU engineering audit', async () => {
@@ -139,7 +166,7 @@ test('accepts a research task packet from AgentTeams only in a delegated session
   const root = await assembleFor('deep-performance', baseSections, [
     message('Review reproducibility and data leakage', { kind: 'plugin', plugin: 'dsh-agent-teams' }),
   ])
-  assert.deepEqual(sectionNames(root), ['deployment:persona', 'tool:web', 'research-thinking:router'])
+  assert.deepEqual(sectionNames(root), ['deployment:persona', 'tool:web'])
 })
 
 test('clears research state on an unrelated new task or explicit exit', async () => {
@@ -148,7 +175,7 @@ test('clears research state on an unrelated new task or explicit exit', async ()
       message('\u8fdb\u884c\u6df1\u5ea6\u7814\u7a76'),
       message(followup),
     ])
-    assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web', 'research-thinking:router'])
+    assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web'])
   }
 })
 

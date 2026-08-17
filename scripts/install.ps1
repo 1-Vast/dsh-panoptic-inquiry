@@ -71,6 +71,7 @@ $source = Join-Path $repository 'preset\deep-performance'
 $required = @(
   'preset.yml',
   'agent.cordis.yml',
+  'custom-bash.mjs',
   'tool-bootstrap.mjs',
   'compaction-epoch.mjs',
   'instruction-hint.mjs',
@@ -103,7 +104,6 @@ if ($dshVersion -ne '0.1.0-rc.6') {
   throw "Unsupported DeepSeek Harness version $dshVersion. This beta is validated only on 0.1.0-rc.6."
 }
 Invoke-Dsh @('plugin', '--profile', $Profile, 'add', '@nanmicoder/dsh-agent-teams@0.1.5')
-Invoke-Dsh @('plugin', '--profile', $Profile, 'add', 'dsh-plugin-solo-thinking@0.1.18')
 Invoke-Dsh @('plugin', '--profile', $Profile, 'add', $repository)
 
 New-Item -ItemType Directory -Path $presetRoot -Force | Out-Null

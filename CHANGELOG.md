@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-beta.2
+
+- Removed ordinary-task mode prompt overhead and made AgentTeams opt-in by
+  explicit collaboration intent.
+- Lowered long-run compaction pressure to 25%, retained an 8% recent tail,
+  routed summaries through Flash with a 2K-token cap, reduced tool-result and
+  fetch output budgets, and added batched Code Mode guidance.
+- Added completion-claim gates for physical split isolation, audit freshness,
+  clean worktrees, proxy disclosure, and scope-bounded negative conclusions.
+- Added the stable Windows Git Bash tool and removed the obsolete Solo
+  Thinking dependency.
+- Fixed first-turn deep requests so research gates survive Minimal bootstrap.
+
 ## 0.1.0-beta.1
 
 - Added adaptive Normal and Deep routing.

@@ -13,6 +13,7 @@ const required = [
   'THIRD_PARTY_NOTICES.md',
   'preset/deep-performance/preset.yml',
   'preset/deep-performance/agent.cordis.yml',
+  'preset/deep-performance/custom-bash.mjs',
   'preset/deep-performance/tool-bootstrap.mjs',
   'preset/deep-performance/compaction-epoch.mjs',
   'preset/deep-performance/instruction-hint.mjs',
@@ -25,6 +26,9 @@ for (const path of required) await readFile(join(root, path))
 
 const agentConfig = await readFile(join(root, 'preset/deep-performance/agent.cordis.yml'), 'utf8')
 assert.match(agentConfig, /fetch:\s+false/)
+assert.match(agentConfig, /thresholdRatio:\s+0\.25/)
+assert.match(agentConfig, /retainRatio:\s+0\.08/)
+assert.match(agentConfig, /summarizationModel:\s+deepseek-v4-flash/)
 for (const match of agentConfig.matchAll(/name:\s+(\.\/[^\s]+)/g)) {
   await readFile(join(root, 'preset/deep-performance', match[1]))
 }

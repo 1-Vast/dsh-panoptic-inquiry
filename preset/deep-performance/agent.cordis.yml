@@ -82,6 +82,7 @@
 - id: persistent-shell
   name: cordis:group
   group: true
+  disabled: !!js process.platform === 'win32'
   isolate:
     terminals: true
   config:
@@ -106,6 +107,15 @@
           * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
           * Please avoid commands that may produce a very large amount of output.
           * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.
+
+# Windows cannot inspect PTY process trees. Preserve the model-facing bash
+# tool with an ordinary Git Bash child process instead of the PTY backend.
+- id: custom-bash
+  name: ./custom-bash.mjs
+  disabled: !!js process.platform !== 'win32'
+  config:
+    bashPath: 'C:\Program Files\Git\bin\bash.exe'
+    timeoutMs: 300000
 
 # ── minimal phase-1 filesystem ──────────────────────────────────────────────
 
@@ -211,6 +221,14 @@
   config:
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        # Long Goal runs repeatedly bill the full cached context. Compact well
+        # before the model's default 80% pressure point and retain a useful tail.
+        thresholdRatio: 0.25
+        retainRatio: 0.08
+        summarizationProvider: deepseek-official
+        summarizationModel: deepseek-v4-flash
+        maxTokens: 2048
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
@@ -218,9 +236,9 @@
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
       config:
-        thresholdChars: 8192
-        headChars: 4096
-        tailChars: 1024
+        thresholdChars: 4096
+        headChars: 2048
+        tailChars: 512
 
 # ── multi-agent collaboration ───────────────────────────────────────────────
 
@@ -245,5 +263,5 @@
   config:
     fetch: false
     fetchTimeoutMs: 30000
-    fetchMaxOutputChars: 30000
+    fetchMaxOutputChars: 12000
     searchTimeoutMs: 60000

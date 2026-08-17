@@ -29,6 +29,5 @@ compaction-epoch fixes.
 The installer requests these independent MIT-licensed profile plugins:
 
 - dsh-agent-teams: https://github.com/NanmiCoder/dsh-agent-teams
-- dsh-plugin-solo-thinking: https://github.com/fredalxin/dsh-solo-thinking
 
 They are not copied into this repository.

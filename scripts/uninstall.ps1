@@ -63,7 +63,6 @@ Initialize-DshRunner
 Invoke-Dsh @('plugin', '--profile', $Profile, 'remove', 'dsh-panoptic-inquiry')
 if ($RemoveSharedDependencies) {
   Invoke-Dsh @('plugin', '--profile', $Profile, 'remove', '@nanmicoder/dsh-agent-teams')
-  Invoke-Dsh @('plugin', '--profile', $Profile, 'remove', 'dsh-plugin-solo-thinking')
 }
 
 Write-Warning 'Sessions that reference deep-performance require the archived preset to resume.'

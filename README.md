@@ -17,8 +17,10 @@ existing sessions remain resumable.
   accelerator utilization, and bug review checks when relevant.
 - Uses compact English for internal queries, task packets, and reports while
   answering in the user's language and requested format.
-- Hides AgentTeams tools from ordinary work and caps recommended teams at
-  three members.
+- Hides AgentTeams tools unless collaboration is explicitly requested and
+  caps recommended teams at three members.
+- Adds no mode-specific prompt text to ordinary work, batches independent
+  Code Mode operations, and compacts long sessions at 25% context pressure.
 - Replaces visible chain-of-thought requests with auditable evidence ledgers,
   tests, counterexamples, and short decision summaries.
 
@@ -63,7 +65,7 @@ cd dsh-panoptic-inquiry
 
 The installer:
 
-1. installs fixed AgentTeams and Solo Thinking profile dependencies;
+1. installs the fixed AgentTeams profile dependency;
 2. adds this repository as a DSH profile bundle;
 3. validates and copies the `deep-performance` preset;
 4. refuses to replace an existing preset unless `-Upgrade` is passed.
@@ -97,9 +99,8 @@ blocking and redirect/DNS validation. Prompt text is not an SSRF boundary.
 .\scripts\uninstall.ps1 -Profile web -DshRoot C:\path\to\deepseek-harness
 ```
 
-The preset is archived rather than deleted. Shared AgentTeams and Solo
-Thinking dependencies are retained unless
-`-RemoveSharedDependencies` is explicitly supplied. Sessions that still
+The preset is archived rather than deleted. The shared AgentTeams dependency
+is retained unless `-RemoveSharedDependencies` is explicitly supplied. Sessions that still
 refer to `deep-performance` cannot resume after removal until the preset is
 restored.
 
@@ -123,3 +124,19 @@ Default user-facing results are concise:
 
 Internal agent activity and raw logs are omitted unless the user requests
 them.
+
+## Long-run cost policy
+
+DeepSeek usage dashboards count cached input again on every model request.
+Long tool-driven sessions can therefore report hundreds of millions of tokens
+even when most input is a cache hit. This preset reduces that multiplier by
+compacting at 25% of the routed model context window, retaining an 8% verbatim
+tail, summarizing through Flash with a 2K-token cap, pruning large tool results,
+batching independent tool calls, and ending coherent stages so Goal continuation resumes from durable artifacts. Exact
+cost still depends on task length, model pricing, and the number of sequential
+model decisions.
+
+Before a research Goal is marked complete, the audit gate checks required
+physical split isolation, worktree cleanliness, final-audit freshness, direct
+method versus proxy coverage, and claim scope. Unmet contracts require a
+conditional completion statement rather than a universal negative claim.
