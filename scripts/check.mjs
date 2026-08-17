@@ -26,8 +26,8 @@ for (const path of required) await readFile(join(root, path))
 
 const agentConfig = await readFile(join(root, 'preset/deep-performance/agent.cordis.yml'), 'utf8')
 assert.match(agentConfig, /fetch:\s+false/)
-assert.match(agentConfig, /thresholdRatio:\s+0\.25/)
-assert.match(agentConfig, /retainRatio:\s+0\.08/)
+assert.match(agentConfig, /thresholdRatio:\s+0\.15/)
+assert.match(agentConfig, /retainRatio:\s+0\.04/)
 assert.match(agentConfig, /summarizationModel:\s+deepseek-v4-flash/)
 for (const match of agentConfig.matchAll(/name:\s+(\.\/[^\s]+)/g)) {
   await readFile(join(root, 'preset/deep-performance', match[1]))

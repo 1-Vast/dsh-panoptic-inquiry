@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.3
+
+- Lowered long-run compaction pressure to 15%, retained a 4% recent tail, and
+  capped Flash summaries at 1,536 tokens after replaying a 657-request Goal.
+- Tightened tool-result and fetch output budgets while preserving recent heads
+  and tails for diagnosis.
+
 ## 0.1.0-beta.2
 
 - Removed ordinary-task mode prompt overhead and made AgentTeams opt-in by

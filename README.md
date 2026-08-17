@@ -20,7 +20,7 @@ existing sessions remain resumable.
 - Hides AgentTeams tools unless collaboration is explicitly requested and
   caps recommended teams at three members.
 - Adds no mode-specific prompt text to ordinary work, batches independent
-  Code Mode operations, and compacts long sessions at 25% context pressure.
+  Code Mode operations, and compacts long sessions at 15% context pressure.
 - Replaces visible chain-of-thought requests with auditable evidence ledgers,
   tests, counterexamples, and short decision summaries.
 
@@ -130,8 +130,8 @@ them.
 DeepSeek usage dashboards count cached input again on every model request.
 Long tool-driven sessions can therefore report hundreds of millions of tokens
 even when most input is a cache hit. This preset reduces that multiplier by
-compacting at 25% of the routed model context window, retaining an 8% verbatim
-tail, summarizing through Flash with a 2K-token cap, pruning large tool results,
+compacting at 15% of the routed model context window, retaining a 4% verbatim
+tail, summarizing through Flash with a 1,536-token cap, pruning large tool results,
 batching independent tool calls, and ending coherent stages so Goal continuation resumes from durable artifacts. Exact
 cost still depends on task length, model pricing, and the number of sequential
 model decisions.

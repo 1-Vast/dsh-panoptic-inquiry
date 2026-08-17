@@ -224,11 +224,11 @@
       config:
         # Long Goal runs repeatedly bill the full cached context. Compact well
         # before the model's default 80% pressure point and retain a useful tail.
-        thresholdRatio: 0.25
-        retainRatio: 0.08
+        thresholdRatio: 0.15
+        retainRatio: 0.04
         summarizationProvider: deepseek-official
         summarizationModel: deepseek-v4-flash
-        maxTokens: 2048
+        maxTokens: 1536
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
@@ -236,9 +236,9 @@
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
       config:
-        thresholdChars: 4096
-        headChars: 2048
-        tailChars: 512
+        thresholdChars: 3072
+        headChars: 1536
+        tailChars: 384
 
 # ── multi-agent collaboration ───────────────────────────────────────────────
 
@@ -263,5 +263,5 @@
   config:
     fetch: false
     fetchTimeoutMs: 30000
-    fetchMaxOutputChars: 12000
+    fetchMaxOutputChars: 8000
     searchTimeoutMs: 60000
