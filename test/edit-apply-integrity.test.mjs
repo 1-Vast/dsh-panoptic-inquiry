@@ -248,8 +248,8 @@ test('C1b: internal stale protection does not depend on the caller supplying a d
   // while the file holds neither version's intended content.
   const onDisk = await readFile(file, 'utf8')
   if (result.status === 'applied') {
-    assert.equal(onDisk, result.sha256 === sha(onDisk) ? onDisk : onDisk)
     assert.equal(sha(onDisk), result.sha256, 'an applied edit must match the digest it reports')
+    assert.equal(onDisk, 'MINE\npadding\n', 'an applied edit must have written its own intended content')
   } else {
     assert.equal(result.status, 'stale')
     assert.match(result.text, /nothing was written/)
@@ -448,8 +448,10 @@ test('a completed mutation retires stale process-failure history', { skip: !canR
   await writeFile(file, 'value = 1\n')
 
   const { apply: applyBash } = await import('../preset/deep-performance/custom-bash.mjs')
-  const session = { id: 'generation' }
-  const exec = { agent: { session, header: { cwd: dir } } }
+  // ONE session object shared by both tools, exactly as a real session is:
+  // failure history is keyed by session identity, so a copy would not share it.
+  const session = { id: 'generation', header: { cwd: dir } }
+  const exec = { agent: { session } }
   const bashTools = []
   applyBash({ subprocess: realSubprocess(), tools: { register: tool => bashTools.push(tool) } },
     { bashPath: BASH, timeoutMs: 60000 })
@@ -458,7 +460,7 @@ test('a completed mutation retires stale process-failure history', { skip: !canR
   const tools = []
   apply({ subprocess: realSubprocess(), tools: { register: tool => tools.push(tool) } },
     { bashPath: BASH, timeoutMs: 60000 })
-  const edit = args => tools[0].execute(args, { agent: { session, header: { cwd: dir } }, ...{} })
+  const edit = args => tools[0].execute(args, exec)
 
   // A test fails, the source is fixed, the same test fails again for a new
   // reason. That is a new experiment, not a repeated strategy.
@@ -475,4 +477,110 @@ test('a completed mutation retires stale process-failure history', { skip: !canR
   // With no state change in between, the repeat is still a repeat.
   const repeat = await bash({ command: 'echo "assert failed"; exit 1' })
   assert.match(repeat.text, /no progress: process_nonzero failed 2x/)
+})
+
+// ── fail closed without a workspace root ────────────────────────────────────
+
+test('a session without a workspace root refuses to mutate', () => {
+  // Confinement cannot be checked without a root, so the absence of one must
+  // refuse the edit rather than quietly disable the restriction.
+  for (const cwd of [undefined, '', null, 0]) {
+    const refused = resolveTarget('anything.txt', cwd)
+    assert.equal(refused.ok, false, `cwd ${JSON.stringify(cwd)} must not be treated as unconfined`)
+    assert.match(refused.reason, /no workspace root/)
+  }
+  // An absolute path is refused on the same grounds, not silently accepted.
+  assert.equal(resolveTarget('D:\anywhere\file.txt', undefined).ok, false)
+
+  // A root that IS present still works, and an explicit opt-out still works.
+  assert.equal(resolveTarget('file.txt', 'D:\work').ok, true)
+  assert.equal(resolveTarget('D:\elsewhere\file.txt', undefined, true).ok, true)
+})
+
+test('the tool refuses to edit when the session has no workspace root', { skip: !canRun }, async (t) => {
+  const dir = await workspace(t, 'no-root')
+  const file = join(dir, 'target.txt')
+  await writeFile(file, 'ORIGINAL\n')
+
+  const tools = []
+  apply({ subprocess: realSubprocess(), tools: { register: tool => tools.push(tool) } },
+    { bashPath: BASH, timeoutMs: 60000 })
+  const rootless = { agent: { session: { id: 'rootless', header: {} } } }
+
+  await assert.rejects(
+    tools[0].execute({ path: file, old_string: 'ORIGINAL', new_string: 'OWNED' }, rootless),
+    /no workspace root/,
+  )
+  assert.equal(await readFile(file, 'utf8'), 'ORIGINAL\n', 'a refused edit must not touch the file')
+
+  // Configured opt-out restores the previous behaviour deliberately.
+  const opened = []
+  apply({ subprocess: realSubprocess(), tools: { register: tool => opened.push(tool) } },
+    { bashPath: BASH, timeoutMs: 60000, allowOutsideWorkspace: true })
+  const result = await opened[0].execute({ path: file, old_string: 'ORIGINAL', new_string: 'OWNED' }, rootless)
+  assert.equal(result.status, 'applied')
+  assert.equal(await readFile(file, 'utf8'), 'OWNED\n')
+  await assertNoStagingLeft(dir)
+})
+
+// ── commit-time failures never claim an unchanged original ──────────────────
+
+/** Mount edit_apply with a subprocess that fails one matching command. */
+function mountWithFailure(cwd, shouldFail) {
+  const base = realSubprocess()
+  const tools = []
+  apply({
+    subprocess: {
+      resolveExecutable: base.resolveExecutable,
+      spawn(options) {
+        const command = String(options.argv[2])
+        const handle = base.spawn(options)
+        if (!shouldFail(command)) return handle
+        // Run the command for real, then report a non-zero exit — the shape a
+        // kill takes after the work has already happened.
+        return { ...handle, done: handle.done.then(() => ({ exitCode: 143 })) }
+      },
+    },
+    tools: { register: tool => tools.push(tool) },
+  }, { bashPath: BASH, timeoutMs: 60000 })
+  const exec = { agent: { session: { id: 'commit-failure', header: { cwd } } } }
+  return args => tools[0].execute(args, exec)
+}
+
+test('a commit killed after the rename never claims the original is unchanged', { skip: !canRun }, async (t) => {
+  const dir = await workspace(t, 'commit-kill')
+  const file = join(dir, 'victim.py')
+  await writeFile(file, 'value = 1\n')
+
+  // The committing command is the one carrying `mv -f`. Let it do its work,
+  // then report termination — the file HAS already been replaced.
+  const call = mountWithFailure(dir, command => command.includes('mv -f'))
+  const result = await call({ path: file, old_string: 'value = 1', new_string: 'value = 2' })
+
+  assert.equal(result.status, 'commit_uncertain')
+  assert.equal(result.applied, false)
+  assert.match(result.text, /DISK STATE IS UNCERTAIN/)
+  assert.match(result.text, /Re-read the file/)
+  // The claim that would have been false: the file really did change.
+  assert.doesNotMatch(result.text, /unchanged/)
+  assert.equal(await readFile(file, 'utf8'), 'value = 2\n',
+    'this scenario is only meaningful if the rename actually landed')
+  await assertNoStagingLeft(dir)
+})
+
+test('a staging failure before the commit does claim an unchanged original, truthfully', { skip: !canRun }, async (t) => {
+  const dir = await workspace(t, 'staging-fail')
+  const file = join(dir, 'safe.py')
+  const original = 'HEAD\nANCHOR\nTAIL\n'
+  await writeFile(file, original)
+
+  // A chunked write stages the payload in earlier commands; failing one of
+  // those cannot have renamed anything.
+  const call = mountWithFailure(dir, command => command.includes('.b64') && !command.includes('mv -f'))
+  const result = await call({ path: file, old_string: 'ANCHOR', new_string: 'z'.repeat(9000) })
+
+  assert.equal(result.status, 'write_failure')
+  assert.match(result.text, /Nothing was committed and the original file is unchanged/)
+  assert.equal(await readFile(file, 'utf8'), original, 'the claim must be true')
+  await assertNoStagingLeft(dir)
 })

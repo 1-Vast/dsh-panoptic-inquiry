@@ -90,7 +90,13 @@ export function resolveTarget(rawPath, cwd, allowOutside = false) {
   }
   const root = typeof cwd === 'string' && cwd.length > 0 ? resolve(cwd) : undefined
   const absolute = root === undefined ? resolve(rawPath) : resolve(root, rawPath)
-  if (allowOutside === true || root === undefined) return { ok: true, absolute }
+  if (allowOutside === true) return { ok: true, absolute }
+  // Fail closed: a session without a workspace root has no boundary to check
+  // against, so confinement cannot be enforced. Refuse rather than silently
+  // turning the restriction off for exactly the sessions that lack one.
+  if (root === undefined) {
+    return { ok: false, reason: 'no workspace root is selected for this session, so the edit cannot be confined', absolute }
+  }
 
   const insensitive = process.platform === 'win32'
   const from = insensitive ? root.toLowerCase() : root
@@ -360,7 +366,8 @@ export function apply(ctx, config) {
     description: [
       'Edit one file and get a STATUS back instead of an exception, so a recoverable conflict does not need a new round of reasoning.',
       'Replace a span: pass path + old_string + new_string. Rewrite the file: pass path + content. Optional expected_sha256 rejects an edit built against stale content.',
-      'status is one of: applied | conflict | ambiguous | stale | unchanged | missing | too_large | write_failure | verify_failure.',
+      'status is one of: applied | conflict | ambiguous | stale | unchanged | missing | read_failure | too_large | write_failure | verify_failure | commit_uncertain.',
+      'write_failure means nothing was committed and the file is unchanged. commit_uncertain means the committing step did not finish and the file may or may not have been replaced — re-read it before deciding anything. verify_failure means the file was replaced but does not hold the intended content.',
       'A line-ending or trailing-whitespace difference is resolved automatically when the match is unique (status applied, tolerant true) — do not re-quote or re-indent by hand to work around it.',
       'On conflict the result carries the CURRENT text around the closest candidate span with its line number: rebuild old_string from that text and call again in the same step rather than re-reading the file.',
       'On ambiguous the anchor matches several places: extend old_string with surrounding lines.',
@@ -506,7 +513,12 @@ export function apply(ctx, config) {
       })
 
       let digestOutput = ''
-      for (const command of plan.commands) {
+      for (const [index, command] of plan.commands.entries()) {
+        // Only the LAST command can rename anything; every earlier command
+        // writes to the payload staging file alone. That distinction is what
+        // makes "the original is unchanged" safe to say for one and not the
+        // other.
+        const isCommit = index === plan.commands.length - 1
         const step = await run(command, exec)
         if (step.exitCode === 9 || step.stdout.includes('STALE ')) {
           // The target changed between the read and the commit. The guard
@@ -517,9 +529,21 @@ export function apply(ctx, config) {
             { sha256: now })
         }
         if (step.exitCode !== 0) {
+          const detail = step.stderr.trim() || `exit ${step.exitCode}`
           await run(cleanupCommand(plan), exec)
-          return fail(FAILURE_CLASS.writeFailure, 'write_failure',
-            `writing ${args.path} failed before the replacement was committed: ${step.stderr.trim() || `exit ${step.exitCode}`}. The original file is unchanged.`)
+          if (!isCommit) {
+            return fail(FAILURE_CLASS.writeFailure, 'write_failure',
+              `staging the replacement for ${args.path} failed: ${detail}. Nothing was committed and the original file is unchanged.`)
+          }
+          // The committing command carries the stale check, the rename, the
+          // cleanup and the digest echo. A non-zero exit can mean it stopped
+          // before the rename OR that it was killed after it: the two are
+          // indistinguishable from here, so neither rollback nor an unchanged
+          // original may be claimed.
+          return fail(FAILURE_CLASS.verifyFailure, 'commit_uncertain',
+            `committing ${args.path} did not complete: ${detail}.`
+            + ' DISK STATE IS UNCERTAIN: the replacement may or may not have been renamed into place.'
+            + ' Re-read the file to establish its current content before editing it again.')
         }
         digestOutput = step.stdout
       }

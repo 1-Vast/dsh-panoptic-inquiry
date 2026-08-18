@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-beta.6.1 (hotfix)
+
+- `edit_apply` now fails closed when the session has no workspace root.
+  Previously a missing root disabled confinement entirely, so exactly the
+  sessions without a declared workspace could edit anywhere. Widening scope
+  still requires `allowOutsideWorkspace`.
+- A commit that does not complete no longer claims the original file is
+  unchanged. Staging failures (which cannot have renamed anything) keep that
+  claim; a failure in the committing command, which carries the rename, now
+  returns `commit_uncertain` and states that disk state is uncertain and the
+  file must be re-read. A regression simulates termination after the rename
+  and asserts the file really did change.
+- Added `read_failure` and `commit_uncertain` to the model-facing status list,
+  so the declared contract matches runtime behaviour.
+- Removed a tautological assertion in the concurrency regression while keeping
+  the digest invariant it was meant to check.
+
 ## 0.1.0-beta.6.1
 
 Release hardening. No new capabilities; correctness, concurrency, data

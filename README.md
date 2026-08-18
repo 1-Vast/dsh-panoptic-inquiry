@@ -78,8 +78,11 @@ payload through both the JavaScript and shell layers.
 
 A rejected edit is stale local state, not a design problem. `edit_apply`
 returns a status — `applied`, `conflict`, `ambiguous`, `stale`, `unchanged`,
-`missing`, `read_failure`, `too_large`, `write_failure`, `verify_failure` —
-instead of raising.
+`missing`, `read_failure`, `too_large`, `write_failure`, `verify_failure`,
+`commit_uncertain` — instead of raising. `write_failure` means nothing was
+committed and the file is unchanged; `commit_uncertain` means the committing
+step did not finish, so the file may or may not have been replaced and must be
+re-read before anything else is decided.
 CRLF and trailing-whitespace drift is resolved in place when the match is
 unique; a non-unique anchor is reported rather than guessed; and a conflict
 carries the current text around the closest candidate line, so the anchor can
@@ -94,7 +97,9 @@ span keeps its own line-ending convention so a CRLF file does not become mixed.
 `edit_apply` is confined to the session workspace. Paths are resolved against
 the session directory and checked by canonical containment, not by string
 prefix, so `D:\work2` is not inside `D:\work`; traversal and absolute paths
-outside the root are refused before anything is read. Widening this is a
+outside the root are refused before anything is read. The check fails closed: a
+session with no selected workspace has no boundary to check against, so the
+mutation is refused rather than proceeding unconfined. Widening this is a
 deliberate configuration decision (`allowOutsideWorkspace`), never a side
 effect of the Bash lane being able to reach the filesystem.
 
