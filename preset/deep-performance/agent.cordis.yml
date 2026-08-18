@@ -51,8 +51,9 @@
 # tool-less first response, and releases an anchor-gated session once its
 # first turn ends (`turn/end`). After promotion the catalog is presented as
 # Code Mode (PTC): a single `run_code` tool on the wire, switched at the step
-# boundary; workspace instructions and the skill catalog are deferred one
-# step after promotion.
+# boundary. No injection deferral is configured: `instruction-hint` and
+# `skill-search` already replace the two large injected blocks
+# (`deferredSources`/`deferredGraceSteps` stay unset).
 - id: tool-bootstrap
   name: ./tool-bootstrap.mjs
   config:
@@ -100,6 +101,7 @@
         timeoutMs: 300000
         description: |-
           Run commands in a bash shell
+          The command and description fields are both required. Always provide a concise description.
           * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
           * You don't have access to the internet via this tool.
           * You do have access to a mirror of common linux and python packages via apt and pip.
@@ -116,6 +118,23 @@
   config:
     bashPath: 'C:\Program Files\Git\bin\bash.exe'
     timeoutMs: 300000
+
+# Durable background jobs. Measured on Windows: a `&`-backgrounded child
+# inherits this tool's stdout/stderr pipes, so the launching call stays
+# attached for the child's whole lifetime, hits `timeoutMs`, and is killed —
+# and because Git Bash's `bash.exe` is an MSYS stub that re-execs, that kill
+# reaches the stub while the workload keeps running as an orphan. `bash_job`
+# separates the three timeouts the tool above conflates (launch, job runtime,
+# no-progress), keeps job identity in durable files, and cancels through the
+# MSYS process group, which is the only handle covering native children.
+- id: job-runner
+  name: ./job-runner.mjs
+  disabled: !!js process.platform !== 'win32'
+  config:
+    bashPath: 'C:\Program Files\Git\bin\bash.exe'
+    controlTimeoutMs: 30000
+    jobsDir: .dsh-jobs
+    maxLogChars: 2400
 
 # ── minimal phase-1 filesystem ──────────────────────────────────────────────
 

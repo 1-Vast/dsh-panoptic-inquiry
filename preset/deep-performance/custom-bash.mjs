@@ -26,7 +26,7 @@ export function apply(ctx, config) {
       '* Commands run in a fresh process; state does not persist between calls.',
       '* This tool runs without OS sandbox confinement on Windows; do not use it for network access.',
       '* Avoid commands that may produce a very large amount of output.',
-      '* Start work expected to exceed 90 seconds as one detached process with a log and PID; verify it once instead of holding the tool call open or polling repeatedly.',
+      '* This tool is for work that finishes inside one tool call. Backgrounding with `&` does NOT return control here: the child inherits this call\'s output pipes and holds it open until the child exits, and the timeout then kills the launcher without stopping the work. Use bash_job for anything expected to exceed ~90 seconds.',
     ].join('\n'),
     parameters: commandSchema,
     output: {
@@ -68,7 +68,13 @@ export function apply(ctx, config) {
         // Some subprocess backends may not expose collected readers.
       }
       const text = [stdout, stderr].filter(part => part.length > 0).join('\n')
-      if (outcome.exitCode !== 0) throw new Error(text || `exit code: ${outcome.exitCode}`)
+      if (outcome.exitCode !== 0) {
+        // Keep the exit code even when the command printed something: `1` from
+        // grep, `5` from an empty pytest run and a crash are different facts,
+        // and a failure message alone cannot distinguish them.
+        const code = Number.isInteger(outcome.exitCode) ? outcome.exitCode : 'unknown (terminated)'
+        throw new Error(text.length > 0 ? `${text}\n(exit code: ${code})` : `exit code: ${code}`)
+      }
       return { text: text || 'exit code: 0 (no output)' }
     },
   })

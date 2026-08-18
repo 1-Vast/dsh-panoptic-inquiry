@@ -11,16 +11,29 @@ existing sessions remain resumable.
 ## What it does
 
 - Routes bounded work through a Normal path with proportional verification.
-- Adds a research evidence gate for literature and paper review.
+- Recognises deep scientific questions by shape rather than by mode keywords,
+  so "why does this fail to transfer?" or "can this gain be attributed to the
+  module?" reach the reasoning lane without being announced as research.
+- Adds a scientific reasoning gate for diagnosis: root-cause-first framing,
+  two to four competing explanations, discriminating tests, cheap alternative
+  explanations, escalation and de-escalation rules, no-progress detection, and
+  a calibrated final verdict.
+- Adds a research evidence gate for literature and paper review, with batched
+  discovery, decision-relevance triage, primary-source verification,
+  contradiction search, and saturation-based stopping.
 - Treats cross-domain papers as mechanism candidates, never as designs to copy.
 - Adds reproduction, leakage, statistics, ablation, code quality, runtime,
   accelerator utilization, and bug review checks when relevant.
 - Uses compact English for internal queries, task packets, and reports while
   answering in the user's language and requested format.
 - Hides AgentTeams tools unless collaboration is explicitly requested and
-  caps recommended teams at three members.
-- Adds no mode-specific prompt text to ordinary work, batches independent
-  Code Mode operations, and compacts long sessions at 15% context pressure.
+  caps recommended teams at three members. Training vocabulary such as
+  "tensor parallel" no longer counts as a collaboration request.
+- Runs long experiments, downloads, and builds as durable background jobs on
+  Windows instead of blocking a tool call (see Long-running work).
+- Adds no mode-specific prompt text to ordinary work, spends protocol budget
+  per lane, batches independent Code Mode operations, and compacts long
+  sessions at 15% context pressure.
 - Replaces visible chain-of-thought requests with auditable evidence ledgers,
   tests, counterexamples, and short decision summaries.
 
@@ -41,6 +54,28 @@ analogous fields can inform new mechanisms. Every transfer must document the
 source invariant, source assumptions, target analogue, mismatches, required
 adaptation, falsifiable prediction, failure modes, and a discriminating
 ablation.
+
+## Long-running work
+
+`command &` inside the Windows bash tool does not return control. The
+backgrounded child inherits the tool call's output pipes, so the call stays
+attached until the child exits, reaches the 300-second shell timeout, and is
+killed. Git Bash's `bash.exe` is also an MSYS stub that re-execs, so that kill
+reaches the stub while the workload keeps running as an orphan, leaving
+partial artifacts behind.
+
+The `bash_job` tool replaces that pattern on Windows. `start` returns a job id
+in about 150 ms and the job outlives the call, the step, and the turn;
+`status`, `logs`, `cancel`, and `list` never block on the job. Identity lives
+in `.dsh-jobs/<job id>/` as plain files — command, cwd, start time, process
+ids, log, and exit code — so a job survives compaction and Goal continuation.
+Cancellation signals the MSYS process group, which is the only handle that
+also covers native children such as `python.exe`; `taskkill /T` alone does
+not, because MSYS reparents at the Windows level.
+
+A job reported as `died` has no recorded exit code: its log is partial output
+and must never be read as a completed run. Add `.dsh-jobs/` to the workspace
+`.gitignore` when job logs should not be versioned.
 
 ## Requirements
 
@@ -106,9 +141,10 @@ restored.
 
 ## Data and privacy
 
-AgentTeams may write `.agent-teams/` under a workspace. That directory can
-contain task descriptions and research summaries; add it to the workspace
-`.gitignore` when it should not be versioned.
+AgentTeams may write `.agent-teams/` under a workspace, and `bash_job` writes
+`.dsh-jobs/`. Those directories can contain task descriptions, research
+summaries, command text, and job logs; add them to the workspace `.gitignore`
+when they should not be versioned.
 
 Never publish DSH profiles, sessions, settings, credentials, caches, logs,
 workspaces, or generated research data with this package.

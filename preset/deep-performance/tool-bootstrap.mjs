@@ -59,6 +59,7 @@ const DEFAULT_MESSAGE_SOURCES = ['user']
 const DEFAULT_DEFERRED_SOURCES = []
 
 const DEEP_ROUTE_SECTIONS = new Set([
+  'research-thinking:reasoning',
   'research-thinking:core',
   'research-thinking:innovation-transfer',
   'research-thinking:verification-audit',

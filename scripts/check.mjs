@@ -14,6 +14,7 @@ const required = [
   'preset/deep-performance/preset.yml',
   'preset/deep-performance/agent.cordis.yml',
   'preset/deep-performance/custom-bash.mjs',
+  'preset/deep-performance/job-runner.mjs',
   'preset/deep-performance/tool-bootstrap.mjs',
   'preset/deep-performance/compaction-epoch.mjs',
   'preset/deep-performance/instruction-hint.mjs',
@@ -29,6 +30,11 @@ assert.match(agentConfig, /fetch:\s+false/)
 assert.match(agentConfig, /thresholdRatio:\s+0\.15/)
 assert.match(agentConfig, /retainRatio:\s+0\.04/)
 assert.match(agentConfig, /summarizationModel:\s+deepseek-v4-flash/)
+// A job log read must stay under the tool-result prune threshold, or the tail
+// the model asked for can be truncated again before it is read.
+const [, pruneThreshold] = agentConfig.match(/thresholdChars:\s+(\d+)/)
+const [, jobLogChars] = agentConfig.match(/maxLogChars:\s+(\d+)/)
+assert.ok(Number(jobLogChars) < Number(pruneThreshold), 'maxLogChars must stay below thresholdChars')
 for (const match of agentConfig.matchAll(/name:\s+(\.\/[^\s]+)/g)) {
   await readFile(join(root, 'preset/deep-performance', match[1]))
 }

@@ -11,6 +11,7 @@ function session(content, delegationDepth = 0, source = { kind: 'user' }) {
 
 test('fast-tracks every routed deep lane', () => {
   for (const name of [
+    'research-thinking:reasoning',
     'research-thinking:core',
     'research-thinking:innovation-transfer',
     'research-thinking:verification-audit',

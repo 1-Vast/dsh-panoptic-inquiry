@@ -95,10 +95,94 @@ test('requires scoped and complete evidence before a goal is marked complete', a
   assert.match(audit, /conditional completion/)
 })
 
-test('keeps injected protocol text within a bounded character budget', async () => {
-  const result = await assembleFor('deep-performance', baseSections, [message('\u8fdb\u884c\u591a\u667a\u80fd\u4f53\u534f\u540c\u7684\u8de8\u9886\u57df\u521b\u65b0\u673a\u5236\u5ba1\u67e5')])
-  const injected = result.sections.filter(item => item.name.startsWith('research-thinking:'))
-  assert.ok(injected.reduce((sum, item) => sum + item.text.length, 0) <= 6500)
+async function injectedChars(request) {
+  const result = await assembleFor('deep-performance', baseSections, [message(request)])
+  return result.sections
+    .filter(item => item.name.startsWith('research-thinking:'))
+    .reduce((sum, item) => sum + item.text.length, 0)
+}
+
+test('spends prompt budget in proportion to the depth the task needs', async () => {
+  // Ordinary work carries no protocol at all; each lane pays only for itself.
+  assert.equal(await injectedChars('\u4fee\u590d\u4e00\u4e2a\u666e\u901a\u9519\u8bef'), 0)
+  assert.ok(await injectedChars('Why does this architecture fail to transfer?') <= 3800)
+  assert.ok(await injectedChars('\u505a\u5de5\u7a0b\u5ba1\u67e5') <= 4500)
+  assert.ok(await injectedChars('\u8fdb\u884c\u591a\u667a\u80fd\u4f53\u534f\u540c\u7684\u8de8\u9886\u57df\u521b\u65b0\u673a\u5236\u5ba1\u67e5') <= 9800)
+})
+
+test('routes semantically deep questions that never name a mode', async () => {
+  const requests = [
+    'Why does this architecture fail to transfer?',
+    'Is the model learning biology or dataset bias?',
+    'What experiment would distinguish these explanations?',
+    'Can this improvement actually be attributed to the proposed module?',
+    'Find the fundamental limitation of this approach.',
+    'our model beats the baseline but only on one seed',
+    '\u4e3a\u4ec0\u4e48\u8fd9\u4e2a\u6a21\u578b\u5728\u65b0\u6570\u636e\u4e0a\u6ce8\u5b9a\u6cdb\u5316\u4e0d\u4e86\uff1f',
+    '\u8fd9\u4e2a\u63d0\u5347\u80fd\u5f52\u56e0\u4e8e\u65b0\u6a21\u5757\u5417\uff1f',
+    '\u6307\u6807\u63d0\u5347\u662f\u771f\u5b9e\u6548\u679c\u8fd8\u662f\u968f\u673a\u6ce2\u52a8\uff1f',
+  ]
+  for (const request of requests) {
+    const result = await assembleFor('deep-performance', baseSections, [message(request)])
+    assert.ok(
+      sectionNames(result).includes('research-thinking:reasoning'),
+      `expected the reasoning lane for: ${request}`,
+    )
+  }
+})
+
+test('leaves ordinary engineering work on the fast path', async () => {
+  const requests = [
+    '\u4fee\u590d\u4e00\u4e2a\u666e\u901a\u9519\u8bef',
+    'fix a typo in the README',
+    'why is this unit test failing?',
+    'why does the build fail on Windows?',
+    'rename the variable in train.py',
+    'list the files under src',
+    '\u628a\u8fd9\u4e2a\u51fd\u6570\u91cd\u6784\u4e00\u4e0b',
+    'run the linter and commit',
+  ]
+  for (const request of requests) {
+    const result = await assembleFor('deep-performance', baseSections, [message(request)])
+    assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web'], `unexpected protocol for: ${request}`)
+  }
+})
+
+test('the reasoning lane demands hypotheses, root cause, and a calibrated verdict', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [message('Why does this model fail to generalize?')])
+  const reasoning = result.sections.find(item => item.name === 'research-thinking:reasoning').text
+  assert.match(reasoning, /two to four competing explanations/)
+  assert.match(reasoning, /dominant bottleneck/)
+  assert.match(reasoning, /add architectural complexity only once evidence shows architecture is the limit/)
+  assert.match(reasoning, /expected information gain/)
+  assert.match(reasoning, /preferred explanation is unsupported/)
+  assert.match(reasoning, /not identifiable from current evidence/)
+  assert.match(reasoning, /add no new information/)
+})
+
+test('the literature lane stages discovery, contradiction, saturation, and a durable ledger', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [message('\u8bf7\u8fdb\u884c\u6df1\u5ea6\u7814\u7a76\u548c\u6587\u732e\u8c03\u7814')])
+  const core = result.sections.find(item => item.name === 'research-thinking:core').text
+  assert.match(core, /complementary queries as one batch/)
+  assert.match(core, /Search for contradiction before any strong claim/)
+  assert.match(core, /More references are not more evidence/)
+  assert.match(core, /survives compaction/)
+})
+
+test('an engineering audit gets verification without literature or reasoning overhead', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [message('\u505a\u5de5\u7a0b\u5ba1\u67e5\u548c\u4ee3\u7801\u5ba1\u67e5')])
+  const names = sectionNames(result)
+  assert.ok(names.includes('research-thinking:verification-audit'))
+  assert.ok(!names.includes('research-thinking:core'))
+  assert.ok(!names.includes('research-thinking:reasoning'))
+})
+
+test('keeps a non-literature lane alive across a short continuation', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [
+    message('\u505a\u5de5\u7a0b\u5ba1\u67e5'),
+    message('\u7ee7\u7eed'),
+  ])
+  assert.ok(sectionNames(result).includes('research-thinking:verification-audit'))
 })
 
 test('fast-tracks a deep request through the bootstrap assembly', async () => {
@@ -182,4 +266,40 @@ test('clears research state on an unrelated new task or explicit exit', async ()
 test('does not affect other presets', async () => {
   const result = await assembleFor('standard', baseSections, [message('\u6df1\u5ea6\u7814\u7a76')])
   assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web'])
+})
+
+test('reserves AgentTeams for asked-for collaboration, not for training vocabulary', async () => {
+  const tools = [{ name: 'bash' }, { name: 'agent_teams_create' }]
+  let listener
+  apply({ on(name, callback) { if (name === 'system-prompt/assemble') listener = callback } })
+  const assemble = (text) => listener({}, {
+    agent: { session: { header: { agentPreset: 'deep-performance' }, events: [message(text)] } },
+  }, async () => ({ sections: baseSections, tools }))
+
+  const tensorParallel = await assemble('分析张量并行训练为什么不收敛')
+  assert.deepEqual(tensorParallel.tools.map(tool => tool.name), ['bash'])
+  assert.ok(!sectionNames(tensorParallel).includes('research-thinking:collaboration'))
+
+  const collaborative = await assemble('用多智能体协同做深度研究')
+  assert.deepEqual(collaborative.tools.map(tool => tool.name), ['bash', 'agent_teams_create'])
+  const contract = collaborative.sections.find(item => item.name === 'research-thinking:collaboration').text
+  assert.match(contract, /independent in execution/)
+  assert.match(contract, /claim, evidence with stable sources, contradiction found, uncertainty/)
+  assert.match(contract, /break the conclusion/)
+})
+
+test('routes long work to the durable job tool only when the session actually has it', async () => {
+  let listener
+  apply({ on(name, callback) { if (name === 'system-prompt/assemble') listener = callback } })
+  const assemble = (tools) => listener({}, {
+    agent: { session: { header: { agentPreset: 'deep-performance' }, events: [message('请进行深度研究')] } },
+  }, async () => ({ sections: baseSections, tools }))
+
+  const withJobs = await assemble([{ name: 'bash' }, { name: 'bash_job' }])
+  assert.match(withJobs.sections.find(item => item.name === 'research-thinking:router').text, /bash_job/)
+
+  const withoutJobs = await assemble([{ name: 'bash' }])
+  const router = withoutJobs.sections.find(item => item.name === 'research-thinking:router').text
+  assert.doesNotMatch(router, /bash_job/)
+  assert.match(router, /detached work with a log and a recorded pid/)
 })
