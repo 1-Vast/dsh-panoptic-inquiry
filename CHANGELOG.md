@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.0-beta.6.2
+
+Compaction policy only. No execution, reasoning, routing, or tooling changes.
+
+- Raised the compaction summary budget from 1536 to 4096 tokens. A real long
+  session recorded 223 truncated summaries and 0 successful compactions: at a
+  0.15 threshold with a 0.04 tail the summariser was asked to compress roughly
+  0.11 x W of research history at 37:1 to 72:1. The cap is only 1.4-2.7% of the
+  tokens each summarisation call already processes, and the retained tail — not
+  the summary — dominates post-compaction context, so the small cap saved
+  almost nothing while wasting every call it truncated.
+- Left `thresholdRatio` (0.15) and `retainRatio` (0.04) unchanged. Summarisation
+  volume is ~1 input token per token of conversation growth at any threshold, so
+  the threshold sets steady-state cached context rather than summary cost; 0.15
+  keeps that steady state lowest, which is the dominant term when cached input
+  is re-billed per request.
+- Added policy invariants (test + repository check) so the budget cannot be
+  starved again silently.
+- Documented that the observed context reduction between preset generations came
+  from tool-result pruning and removed injections, not from compaction, which
+  never succeeded.
+
 ## 0.1.0-beta.6.1 (hotfix)
 
 - `edit_apply` now fails closed when the session has no workspace root.

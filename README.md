@@ -258,6 +258,23 @@ batching independent tool calls, and ending coherent stages so Goal continuation
 cost still depends on task length, model pricing, and the number of sequential
 model decisions.
 
+Two independent mechanisms keep long sessions affordable, and they should not
+be confused. **Context suppression** slows growth: tool-result pruning, batched
+execution, and the removal of the skill-catalog and workspace-instruction
+injections. **Compaction** transforms accumulated history into a summary once
+context pressure reaches `thresholdRatio`, keeping `retainRatio` of recent turns
+verbatim. Measured reductions between preset generations came from the first
+mechanism; compaction only pays off when its summaries actually succeed.
+
+The summary budget is sized against what compaction must represent, not
+minimised. At a 0.15 threshold with a 0.04 tail the summariser receives roughly
+0.11 of the routed window per compaction; a 1536-token cap made that a 37:1 to
+72:1 compression and truncated every attempt. Because the cap is a small
+fraction of the tokens the summarisation call already processes, and because the
+retained tail dominates post-compaction context, a starved cap wastes the whole
+call to save very little. If measured summary output regularly exceeds 90% of
+the cap, raise it rather than accepting truncation.
+
 Before a research Goal is marked complete, the audit gate checks required
 physical split isolation, worktree cleanliness, final-audit freshness, direct
 method versus proxy coverage, and claim scope. Unmet contracts require a

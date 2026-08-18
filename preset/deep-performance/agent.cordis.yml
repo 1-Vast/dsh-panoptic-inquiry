@@ -264,11 +264,27 @@
       config:
         # Long Goal runs repeatedly bill the full cached context. Compact well
         # before the model's default 80% pressure point and retain a useful tail.
+        #
+        # threshold/retain are unchanged: with a 0.04 tail the summariser
+        # receives ~(threshold - retain) x W either way, so the threshold sets
+        # the steady-state context (and therefore the repeated cached-input
+        # bill) without changing summarisation volume per unit of conversation
+        # growth. 0.15 keeps that steady state lowest.
+        #
+        # maxTokens was 1536, which asked the summariser to compress ~0.11 x W
+        # of research history at 37:1 to 72:1. A real session produced 223
+        # truncated summaries and 0 successful compactions. The cap is only
+        # 1.4-2.7% of the tokens each summarisation call already processes, and
+        # the retained tail — not the summary — dominates post-compaction
+        # context, so starving it saved almost nothing while wasting the entire
+        # call. 4096 is the smallest budget with margin for the decision state a
+        # research summary must carry; raise to 6144 only if measured output
+        # length regularly exceeds 90% of the cap.
         thresholdRatio: 0.15
         retainRatio: 0.04
         summarizationProvider: deepseek-official
         summarizationModel: deepseek-v4-flash
-        maxTokens: 1536
+        maxTokens: 4096
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'

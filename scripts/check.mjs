@@ -32,6 +32,10 @@ assert.match(agentConfig, /fetch:\s+false/)
 assert.match(agentConfig, /thresholdRatio:\s+0\.15/)
 assert.match(agentConfig, /retainRatio:\s+0\.04/)
 assert.match(agentConfig, /summarizationModel:\s+deepseek-v4-flash/)
+// A 1536-token cap truncated every summary in a real long session (223 failed
+// compactions, 0 successful). Keep the budget above that starvation floor.
+const [, summaryCap] = agentConfig.match(/maxTokens:\s+(\d+)/)
+assert.ok(Number(summaryCap) >= 4096, `summary maxTokens ${summaryCap} is below the 4096 floor`)
 // A job log read must stay under the tool-result prune threshold, or the tail
 // the model asked for can be truncated again before it is read.
 const [, pruneThreshold] = agentConfig.match(/thresholdChars:\s+(\d+)/)
