@@ -2,6 +2,7 @@ export const name = 'dsh-research-thinking'
 export const inject = ['systemPrompt']
 
 const SUPPORTED_PRESET = 'deep-performance'
+const EXECUTION_SECTION = 'research-thinking:execution'
 const ROUTER_SECTION = 'research-thinking:router'
 const REASONING_SECTION = 'research-thinking:reasoning'
 const CORE_SECTION = 'research-thinking:core'
@@ -24,6 +25,11 @@ const AUDIT_TRIGGER = /论文(?:评审|审查)|(?:评审|审查)(?:这篇|该)?�
 const SCIENCE_OBJECT = /\b(?:model|architecture|network|training|train|dataset|data|experiment|benchmark|baseline|metric|accuracy|precision|recall|auc|loss|score|improvement|gain|generaliz\w*|distribution|feature|embedding|representation|hypothes\w*|mechanism|ablation|seed|variance|sample|label|supervision|pretrain\w*|inference|convergence|module)\b|模型|架构|网络|训练|数据|实验|基线|指标|准确率|精度|损失|提升|泛化|分布|特征|表征|假设|机制|消融|样本|标签|监督|预训练|收敛/i
 const DIAGNOSTIC_MOVE = /\bwhy\b|how\s+come|root\s+cause|\bcauses?\b|\bcaused\s+by\b|explain\w*|\bexplanations?\b|attribut\w*|distinguish\w*|discriminat\w*|\bfails?\s+to\b|\bfailed\s+to\b|does(?:n't|\s+not)\s+(?:generaliz|transfer|converge|work|help|improve)|\blimitations?\b|\bbottleneck\b|trade[-\s]?off|\bbias(?:ed|es)?\b|shortcut|confound\w*|spurious|artifact|contradict\w*|inconsisten\w*|identifiab\w*|counter-?examples?|falsif\w*|overfit\w*|underfit\w*|\breal\s+(?:or|vs\.?)\s+\w+|\bor\s+(?:just\s+)?noise\b|random\s+(?:variation|fluctuation|chance)|statistically\s+significant|为什么|为何|原因|根因|归因|解释|导致|区分|判别|失败|不收敛|无法泛化|泛化不|迁移不|局限|瓶颈|权衡|偏差|捷径|混淆|混杂|虚假相关|矛盾|不一致|反例|证伪|过拟合|欠拟合|随机波动|统计显著|显著性|真实效果|真的有效|是否真的/i
 const DEEP_MARKER = /root\s+cause|attribut(?:e|ed|ion|able)|falsif\w*|counter-?examples?|confound\w*|identifiab\w*|fundamental\s+limitation|discriminating\s+(?:experiment|test|evidence)|competing\s+(?:hypothes\w*|explanations?)|which\s+hypothes\w*|\bleakage\b|contaminat\w*|归因|证伪|反例|混杂|可识别性|根本(?:原因|局限|瓶颈)|本质(?:原因|局限)|判别性实验|竞争假设|数据泄露|数据污染|(?:only|just)\s+(?:on\s+)?one\s+seed|single\s+seed|seed\s+variance|run-to-run|单.{0,2}种子|种子方差|一次实验/i
+
+// Work that runs tools until something verifies: this is where think→edit→
+// error→think micro-loops appear. A lookup, a rename, or a typo fix does not
+// qualify and keeps the zero-overhead path.
+const EXECUTION_TRIGGER = /\berrors?\b|\bexception\b|traceback|stack\s+trace|\bfail(?:s|ed|ing|ure|ures)?\b|\bcrash\w*|\bbug\b|\bbroken\b|does(?:n't|\s+not)\s+work|not\s+working|(?:^|help\s+me\s+|please\s+|let's\s+)debug\b|\bdebug(?:ging)?\s+(?:this|that|the|it|why|my|our)\b|\bimplement\w*|\brefactor\w*|\bmigrat\w*|\bport\s+to\b|make\s+(?:the\s+)?tests?\s+pass|报错|错误|异常|失败|崩溃|不工作|无法运行|跑不起来|调试|排查|实现|重构|迁移/i
 
 // Collaboration must be asked for. Bare "parallel"/"concurrent" are training
 // vocabulary ("tensor parallel"), not a request for more agents.
@@ -80,33 +86,37 @@ export function classifyIntent(text) {
   // Literature and transfer work carry the reasoning discipline with them; a
   // bounded engineering audit does not, and stays cheap.
   const analysis = needsReasoning(text) || core || innovation
+  // Every deep lane also runs tools, so execution discipline comes with them.
+  const execution = EXECUTION_TRIGGER.test(text) || analysis || audit
   return {
     core,
     innovation,
     audit,
     analysis,
+    execution,
     parallel: TEAM_TRIGGER.test(text),
-    any: core || innovation || audit || analysis,
+    any: core || innovation || audit || analysis || execution,
   }
 }
 
 function engaged(state) {
-  return state.active || state.analysis || state.innovation || state.audit
+  return state.active || state.analysis || state.innovation || state.audit || state.execution
 }
 
 function clear(state) {
   state.active = false
   state.analysis = false
+  state.execution = false
   state.innovation = false
   state.audit = false
   state.parallel = false
 }
 
 function gatesFor(session) {
-  if (session === undefined) return { active: false, analysis: false, innovation: false, audit: false, parallel: false }
+  if (session === undefined) return { active: false, analysis: false, execution: false, innovation: false, audit: false, parallel: false }
   const events = session.events ?? []
   let state = gateState.get(session)
-  if (state === undefined) state = { next: 0, active: false, analysis: false, innovation: false, audit: false, parallel: false }
+  if (state === undefined) state = { next: 0, active: false, analysis: false, execution: false, innovation: false, audit: false, parallel: false }
 
   for (; state.next < events.length; state.next += 1) {
     const event = events[state.next]
@@ -122,6 +132,7 @@ function gatesFor(session) {
     if (intent.any) {
       state.active = state.active || intent.core
       state.analysis = state.analysis || intent.analysis
+      state.execution = state.execution || intent.execution
       state.innovation = state.innovation || intent.innovation
       state.audit = state.audit || intent.audit
       state.parallel = state.parallel || intent.parallel
@@ -137,6 +148,19 @@ function gatesFor(session) {
   return state
 }
 
+function executionProtocol() {
+  return `## Execution Discipline
+Work in one loop, not many. Batch the evidence that separates the likely causes — real command output, the relevant file spans, searches, the governing config — into as few round trips as possible, and in Code Mode into one run_code call, keeping operations sequential only where one result decides the next. Then form one root-cause explanation, apply one coherent set of edits, and verify once with the cheapest decisive check. Re-plan when a result contradicts the explanation, not after every observation. Read a span before editing it; never patch from memory of an earlier state.
+
+Classify a tool failure before reacting; an execution failure is not evidence about the design or the science:
+- Transport or parser error (Expected ';', unterminated literal): the payload never ran, so nothing about the target program is evidence. Re-send once as one correctly escaped string; if that fails too, stop trying quote variants — each only shifts which characters break — and move the payload out of band, base64-encoded and decoded into the file.
+- old_string was not found: stale or inexact local state, not a design problem. Re-read the smallest current span, rebuild the patch against what is actually there, retry once. After a second miss change the mutation method — rewrite the region, or write the content to a file — instead of retrying exact strings.
+- Non-zero exit: read the code first; grep 1, diff 1 and pytest 5 are answers, not breakage.
+- Missing dependency, permission, or process-lifecycle error: repair the environment, do not edit the program.
+
+The same failure class twice on one target means the strategy is wrong, not the details: change transport, mutation method, or command shape instead of producing a third variation. State what you established before switching, so the next attempt does not rediscover it.`
+}
+
 function routerProtocol(hasJobTool) {
   // The bash_job tool description already carries the mechanism; the router
   // only has to route to it, so this section stays cheap to bill every request.
@@ -146,7 +170,7 @@ function routerProtocol(hasJobTool) {
   return `## Adaptive Execution Router
 Keep internal queries, task packets, ledgers, and reports in compact English; preserve exact user text and identifiers when needed. Reply in the user's language, concisely and objectively. Use auditable evidence, tests, counterexamples, and unresolved assumptions instead of private chain-of-thought.
 
-Observe cheaply and in parallel, then reason once over the batch. In Code Mode, batch independent reads, searches, and checks in one run_code call; keep operations sequential only where one result decides the next. Keep tool output scoped and summarize large logs or pages before reuse.
+Keep tool output scoped and summarize large logs or pages before reuse.
 
 Work expected to exceed ~90 seconds does not belong inside a tool call: ${longWork}. Then do other independent work and inspect once at a boundary set by the expected runtime or a log milestone — never poll in a loop, and never restart work that may still be running. Output with no recorded exit code is partial, not a result. On Windows, detached Python jobs must redirect all stdio and include CREATE_NO_WINDOW; never open a new console window.
 
@@ -163,7 +187,7 @@ Hold two to four competing explanations instead of a list of ideas. For each, st
 
 Before accepting an explanation, try the cheap alternatives that produce the same result: implementation bug, leakage, shortcut or confound, metric artifact, seed variance, a weaker or unmatched baseline, distribution shift, insufficient data. Say plainly when the preferred explanation is unsupported, and abandon a plan the evidence has overtaken instead of defending prior effort.
 
-Escalate when explanations stay tied, evidence conflicts, a result contradicts theory, or a negative conclusion would end a direction. De-escalate when the answer is deterministic, the evidence is decisive, or nothing further can change the action. If two consecutive attempts add no new information — repeated queries, rereads, restated summaries — stop, state what is established, and change strategy or end the stage.
+Escalate when explanations stay tied, evidence conflicts, a result contradicts theory, or a negative conclusion would end a direction. De-escalate when the answer is deterministic, the evidence is decisive, or nothing further can change the action.
 
 Close with a calibrated verdict: supported, provisionally supported, contradicted, unresolved, or not identifiable from current evidence — and name the observation that would change it.`
 }
@@ -217,7 +241,8 @@ export function apply(ctx) {
     if (preset !== SUPPORTED_PRESET) return assembled
 
     const gates = gatesFor(session)
-    const anyGate = gates.active || gates.analysis || gates.innovation || gates.audit
+    const anyDeepGate = gates.active || gates.analysis || gates.innovation || gates.audit
+    const anyGate = anyDeepGate || gates.execution
     if (isBootstrapAssembly(assembled) && !anyGate) return assembled
 
     const collaborationNeeded = gates.parallel && (session?.header?.delegationDepth ?? 0) === 0
@@ -228,7 +253,8 @@ export function apply(ctx) {
       if (!existing.has(name)) sections.push({ name, order, text })
     }
 
-    if (anyGate) {
+    if (gates.execution) add(EXECUTION_SECTION, 115, executionProtocol())
+    if (anyDeepGate) {
       const hasJobTool = assembled.tools?.some(tool => tool?.name === JOB_TOOL) === true
       add(ROUTER_SECTION, 116, routerProtocol(hasJobTool))
     }
@@ -236,7 +262,7 @@ export function apply(ctx) {
     if (gates.active) add(CORE_SECTION, 118, coreProtocol())
     if (gates.innovation) add(INNOVATION_SECTION, 119, innovationProtocol())
     if (gates.audit) add(AUDIT_SECTION, 120, auditProtocol())
-    if (anyGate && collaborationNeeded) add(COLLABORATION_SECTION, 121, collaborationProtocol())
+    if (anyDeepGate && collaborationNeeded) add(COLLABORATION_SECTION, 121, collaborationProtocol())
 
     const tools = collaborationNeeded
       ? assembled.tools

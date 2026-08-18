@@ -149,11 +149,15 @@ export function parseBlock(text) {
  */
 export function classifyState(record) {
   if (record.present !== '1') return { state: 'missing' }
-  if (record.cancelled) return { state: 'cancelled' }
+  // A recorded exit code is TERMINAL: it is the provenance of a run that
+  // actually finished. A cancel arriving afterwards (or racing the last
+  // instruction) must not relabel that run as cancelled and discard the code.
   if (record.exit) {
     const code = Number(record.exit)
-    return { state: Number.isInteger(code) && code === 0 ? 'completed' : 'failed', exitCode: code }
+    const state = Number.isInteger(code) && code === 0 ? 'completed' : 'failed'
+    return record.cancelled ? { state, exitCode: code, lateCancel: true } : { state, exitCode: code }
   }
+  if (record.cancelled) return { state: 'cancelled' }
   if (!record.winpid) return { state: 'starting' }
   if (Number(record.alive) > 0) return { state: 'running' }
   return { state: 'died' }
@@ -169,6 +173,7 @@ export function renderStatus(jobId, record) {
   if (record.logbytes) parts.push(`log ${record.logbytes} bytes`)
   if (record.idleseconds && verdict.state === 'running') parts.push(`no new output for ${record.idleseconds}s`)
   if (record.command) parts.push(`command: ${record.command}`)
+  if (verdict.lateCancel) parts.push('a cancel arrived after the run finished and did not change its outcome')
   if (verdict.state === 'died') parts.push('no exit code recorded — treat the log as PARTIAL output, not a completed run')
   return parts.join(' | ')
 }
@@ -311,6 +316,9 @@ export function apply(ctx, config) {
         // distinguishable from an unexplained death.
         const result = await control([
           `cd ${shellQuote(jobDir)} 2>/dev/null || { echo 'missing'; exit 0; }`,
+          // Finished is terminal: never write a cancel marker over a real
+          // outcome, so the exit code stays the record of what happened.
+          `if [ -f exit ]; then echo "already finished with exit code $(cat exit)"; exit 0; fi`,
           `date +%Y-%m-%dT%H:%M:%S%z > cancelled`,
           `GP="$(cat pgid 2>/dev/null)"`,
           `WP="$(cat winpid 2>/dev/null)"`,

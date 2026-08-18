@@ -11,6 +11,10 @@ existing sessions remain resumable.
 ## What it does
 
 - Routes bounded work through a Normal path with proportional verification.
+- Adds an execution lane to failure-shaped and implementation work: one
+  diagnostic batch, one root cause, one coherent patch, one decisive
+  verification, plus named recovery for the recurring tool-failure classes.
+  Trivial requests still carry no protocol at all.
 - Recognises deep scientific questions by shape rather than by mode keywords,
   so "why does this fail to transfer?" or "can this gain be attributed to the
   module?" reach the reasoning lane without being announced as research.
@@ -55,6 +59,30 @@ source invariant, source assumptions, target analogue, mismatches, required
 adaptation, falsifiable prediction, failure modes, and a discriminating
 ablation.
 
+## Tool failures
+
+A tool failure is classified before it is acted on, so execution trouble does
+not restart design or scientific reasoning.
+
+A transport or parser error (`Expected ';'`, an unterminated literal) means the
+payload never ran, so nothing about the target program is evidence yet. Naive
+embedding of ordinary payloads — quotes, backslashes, `${...}`, triple-quoted
+blocks, Unicode — survives only 2-4 of 7 measured cases, and each quoting
+strategy fails on a different subset, which is why re-quoting cycles instead of
+converging. Correct escaping survives all of them, and base64 round-trips every
+payload through both the JavaScript and shell layers.
+
+`old_string was not found` is stale local state, not a design problem: re-read
+the smallest current span, rebuild the patch, retry once, then change mutation
+method rather than retrying exact strings.
+
+A non-zero exit is a command-domain result. `bash` returns it as `exit code: N`
+with the output rather than raising, because `grep` 1, `diff` 1 and `pytest` 5
+are answers; only a spawn failure, a timeout kill, or a cancellation raises. An
+identical failure repeated in one session (same command, exit code, and first
+output line) is labelled in-band as no progress, with an instruction to change
+strategy rather than retry.
+
 ## Long-running work
 
 `command &` inside the Windows bash tool does not return control. The
@@ -73,6 +101,8 @@ Cancellation signals the MSYS process group, which is the only handle that
 also covers native children such as `python.exe`; `taskkill /T` alone does
 not, because MSYS reparents at the Windows level.
 
+A recorded exit code is terminal: a cancel arriving after a run finished
+reports that it already finished instead of relabelling the run as cancelled.
 A job reported as `died` has no recorded exit code: its log is partial output
 and must never be read as a completed run. Add `.dsh-jobs/` to the workspace
 `.gitignore` when job logs should not be versioned.

@@ -89,3 +89,9 @@ test('gives deep research and delegated agents the full code-mode surface immedi
     assert.deepEqual(presentations, ['code'])
   }
 })
+
+test('the execution lane does not bypass the minimal anchor', () => {
+  // Execution discipline is for ordinary engineering work, which is exactly
+  // what the anchor exists to shape: it must not fast-track promotion.
+  assert.equal(shouldFastTrack(session('why is this test failing?'), [{ name: 'research-thinking:execution' }]), false)
+})

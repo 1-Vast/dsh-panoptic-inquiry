@@ -31,7 +31,7 @@ test('adds no mode prompt overhead to ordinary work', async () => {
   const result = await assembleFor('deep-performance', [
     ...baseSections,
     { name: 'agent-teams:usage', text: 'poll forever' },
-  ], [message('\u4fee\u590d\u4e00\u4e2a\u666e\u901a\u9519\u8bef')])
+  ], [message('\u628a\u65e5\u5fd7\u7ea7\u522b\u6539\u6210 debug')])
   assert.deepEqual(sectionNames(result), ['deployment:persona', 'tool:web'])
 })
 
@@ -104,10 +104,11 @@ async function injectedChars(request) {
 
 test('spends prompt budget in proportion to the depth the task needs', async () => {
   // Ordinary work carries no protocol at all; each lane pays only for itself.
-  assert.equal(await injectedChars('\u4fee\u590d\u4e00\u4e2a\u666e\u901a\u9519\u8bef'), 0)
-  assert.ok(await injectedChars('Why does this architecture fail to transfer?') <= 3800)
-  assert.ok(await injectedChars('\u505a\u5de5\u7a0b\u5ba1\u67e5') <= 4500)
-  assert.ok(await injectedChars('\u8fdb\u884c\u591a\u667a\u80fd\u4f53\u534f\u540c\u7684\u8de8\u9886\u57df\u521b\u65b0\u673a\u5236\u5ba1\u67e5') <= 9800)
+  assert.equal(await injectedChars('\u628a\u65e5\u5fd7\u7ea7\u522b\u6539\u6210 debug'), 0)
+  assert.ok(await injectedChars('why is this unit test failing?') <= 2200)
+  assert.ok(await injectedChars('Why does this architecture fail to transfer?') <= 5400)
+  assert.ok(await injectedChars('\u505a\u5de5\u7a0b\u5ba1\u67e5') <= 6200)
+  assert.ok(await injectedChars('\u8fdb\u884c\u591a\u667a\u80fd\u4f53\u534f\u540c\u7684\u8de8\u9886\u57df\u521b\u65b0\u673a\u5236\u5ba1\u67e5') <= 11500)
 })
 
 test('routes semantically deep questions that never name a mode', async () => {
@@ -133,13 +134,11 @@ test('routes semantically deep questions that never name a mode', async () => {
 
 test('leaves ordinary engineering work on the fast path', async () => {
   const requests = [
-    '\u4fee\u590d\u4e00\u4e2a\u666e\u901a\u9519\u8bef',
     'fix a typo in the README',
-    'why is this unit test failing?',
-    'why does the build fail on Windows?',
     'rename the variable in train.py',
     'list the files under src',
-    '\u628a\u8fd9\u4e2a\u51fd\u6570\u91cd\u6784\u4e00\u4e0b',
+    'set the log level to debug',
+    '\u628a\u65e5\u5fd7\u7ea7\u522b\u6539\u6210 debug',
     'run the linter and commit',
   ]
   for (const request of requests) {
@@ -157,7 +156,6 @@ test('the reasoning lane demands hypotheses, root cause, and a calibrated verdic
   assert.match(reasoning, /expected information gain/)
   assert.match(reasoning, /preferred explanation is unsupported/)
   assert.match(reasoning, /not identifiable from current evidence/)
-  assert.match(reasoning, /add no new information/)
 })
 
 test('the literature lane stages discovery, contradiction, saturation, and a durable ledger', async () => {
@@ -302,4 +300,52 @@ test('routes long work to the durable job tool only when the session actually ha
   const router = withoutJobs.sections.find(item => item.name === 'research-thinking:router').text
   assert.doesNotMatch(router, /bash_job/)
   assert.match(router, /detached work with a log and a recorded pid/)
+})
+
+test('gives failure-shaped and implementation work an execution lane, without research overhead', async () => {
+  for (const request of [
+    'why is this unit test failing?',
+    'why does the build fail on Windows?',
+    'the parser crashes on empty input',
+    'implement retry logic for the uploader',
+    '重构这个模块并修复报错',
+    'help me debug the parser',
+  ]) {
+    const names = sectionNames(await assembleFor('deep-performance', baseSections, [message(request)]))
+    assert.ok(names.includes('research-thinking:execution'), `expected the execution lane for: ${request}`)
+    assert.ok(!names.includes('research-thinking:core'), `unexpected literature lane for: ${request}`)
+    assert.ok(!names.includes('research-thinking:verification-audit'), `unexpected audit lane for: ${request}`)
+  }
+})
+
+test('the execution lane names each failure class and its recovery', async () => {
+  const result = await assembleFor('deep-performance', baseSections, [message('why is this test failing?')])
+  const execution = result.sections.find(item => item.name === 'research-thinking:execution').text
+
+  // micro-loop collapse
+  assert.match(execution, /Batch the evidence/)
+  assert.match(execution, /one root-cause explanation, apply one coherent set of edits, and verify once/)
+  assert.match(execution, /Re-plan when a result contradicts the explanation, not after every observation/)
+
+  // transport failures are not evidence about the target program
+  assert.match(execution, /the payload never ran/)
+  assert.match(execution, /stop trying quote variants/)
+  assert.match(execution, /base64-encoded/)
+
+  // stale-edit recovery is bounded
+  assert.match(execution, /old_string was not found/)
+  assert.match(execution, /After a second miss change the mutation method/)
+
+  // exit codes are results
+  assert.match(execution, /grep 1, diff 1 and pytest 5 are answers/)
+
+  // circuit breaker
+  assert.match(execution, /same failure class twice on one target/)
+})
+
+test('every deep lane carries the execution discipline with it', async () => {
+  for (const request of ['请进行深度研究', '做工程审查', 'Why does this model fail to generalize?']) {
+    const names = sectionNames(await assembleFor('deep-performance', baseSections, [message(request)]))
+    assert.ok(names.includes('research-thinking:execution'), `expected execution discipline for: ${request}`)
+  }
 })

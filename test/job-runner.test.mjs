@@ -54,6 +54,22 @@ test('state is derived from durable evidence only', () => {
   assert.equal(classifyState({ present: '1', winpid: '42', alive: '0', cancelled: '2026-08-18' }).state, 'cancelled')
 })
 
+test('a recorded exit code is terminal and outlives a late cancel', () => {
+  // A cancel that arrives after the payload finished must not rewrite history:
+  // the exit code is the provenance of a run that actually completed.
+  assert.deepEqual(
+    classifyState({ present: '1', winpid: '42', alive: '0', exit: '0', cancelled: '2026-08-18T09:00:00+0800' }),
+    { state: 'completed', exitCode: 0, lateCancel: true },
+  )
+  assert.deepEqual(
+    classifyState({ present: '1', winpid: '42', alive: '0', exit: '3', cancelled: '2026-08-18T09:00:00+0800' }),
+    { state: 'failed', exitCode: 3, lateCancel: true },
+  )
+  // Cancelling a job that never recorded an exit code still reads as cancelled.
+  assert.equal(classifyState({ present: '1', winpid: '42', alive: '0', cancelled: 'x' }).state, 'cancelled')
+  assert.match(renderStatus('job-1', parseBlock('present=1\nwinpid=42\nalive=0\nexit=0\ncancelled=x\n')), /completed/)
+})
+
 test('a dead job never reports its partial log as a completed run', () => {
   const line = renderStatus('job-1', parseBlock('present=1\nwinpid=42\nalive=0\nlogbytes=120\n'))
   assert.match(line, /died/)
@@ -178,7 +194,14 @@ test('a durable job outlives its launcher and is observable, cancellable, and ne
   assert.match(finalLog.text, /first line/)
   assert.match(finalLog.text, /to stderr/)
 
-  // 8. repeated inspection never creates duplicates
+  // 8. cancelling a finished job leaves its outcome intact
+  const lateCancel = await call({ action: 'cancel', job_id: secondId })
+  assert.match(lateCancel.text, /already finished/)
+  const afterLateCancel = await call({ action: 'status', job_id: secondId })
+  assert.match(afterLateCancel.text, /: failed/)
+  assert.match(afterLateCancel.text, /exit code 3/)
+
+  // 9. repeated inspection never creates duplicates
   const finalList = await call({ action: 'list' })
   assert.match(finalList.text, /^2 job\(s\)/m)
 })

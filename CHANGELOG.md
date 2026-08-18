@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.0-beta.5
+
+- Added an execution lane for failure-shaped and implementation work: batch the
+  diagnostics, form one root cause, apply one coherent patch, verify once, and
+  re-plan only when a result contradicts the explanation. Trivial requests keep
+  the zero-overhead path.
+- Named the recurring tool-failure classes and their recovery, so an execution
+  failure no longer restarts design or scientific reasoning: transport/parser
+  errors mean the payload never ran, `old_string was not found` means stale
+  local state, and a non-zero exit is usually a result.
+- Stopped raising a tool error for every non-zero exit. A non-zero exit now
+  returns `exit code: N` with the output; only a spawn failure, a timeout kill,
+  or a cancellation raises. On a representative fixture this removes 5 of 6
+  spurious tool errors.
+- Added an in-band no-progress detector: an identical repeated failure (same
+  command, exit code, and first output line) is labelled as such at the point
+  of the next decision, with an instruction to change strategy.
+- Fixed `bash_job` state precedence: a recorded exit code is terminal, so a
+  cancel arriving after a run finished no longer relabels it `cancelled` and
+  discards its exit code. `cancel` on a finished job now reports that instead
+  of writing a marker.
+- Added a transport-fragility benchmark. Naive JS embedding of ordinary
+  research payloads survives only 2-4 of 7 cases and each strategy fails on a
+  different subset, which is why re-quoting loops; correct escaping survives
+  7/7 and base64 round-trips every payload through both quoting layers.
+
 ## 0.1.0-beta.4
 
 - Added a scientific reasoning gate: root-cause-first problem framing,
