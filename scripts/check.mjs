@@ -15,6 +15,8 @@ const required = [
   'preset/deep-performance/agent.cordis.yml',
   'preset/deep-performance/custom-bash.mjs',
   'preset/deep-performance/job-runner.mjs',
+  'preset/deep-performance/edit-apply.mjs',
+  'preset/deep-performance/failure-signature.mjs',
   'preset/deep-performance/tool-bootstrap.mjs',
   'preset/deep-performance/compaction-epoch.mjs',
   'preset/deep-performance/instruction-hint.mjs',

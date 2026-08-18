@@ -12,6 +12,7 @@ const COLLABORATION_SECTION = 'research-thinking:collaboration'
 const TEAM_TOOL_PREFIX = 'agent_teams_'
 const TEAM_USAGE_SECTION = 'agent-teams:usage'
 const JOB_TOOL = 'bash_job'
+const EDIT_TOOL = 'edit_apply'
 
 const CORE_TRIGGER = /深度\s*头脑风暴|深度研究|深研|文献(?:综述|调研|检索|回顾)|系统(?:性)?综述|论文(?:分析|评审|审查|阅读)|(?:评审|审查)(?:这篇|该)?论文|科研(?:设计|审查)|研究(?:设计|计划|审查|现状)|实验复现|复现(?:实验|论文|结果|基线)|可复现|最新进展|前沿工作|deep\s+brainstorm|deep\s+research|literature\s+(?:review|search|survey)|systematic\s+review|prior\s+work|state\s+of\s+the\s+art|paper\s+(?:analysis|review)|research\s+(?:design|plan|audit)|reproducibility|reproduc\w*\s+(?:the\s+|this\s+)?(?:paper|study|result|experiment|baseline|benchmark|finding)/i
 const INNOVATION_TRIGGER = /机制探索|创新(?:想法|机制|模块|设计|点)|跨领域(?:迁移|启发|借鉴)|mechanism\s+exploration|innovation\s+(?:idea|mechanism|module|design)|cross[-\s]?domain\s+(?:transfer|inspiration)|novel\s+(?:mechanism|architecture|method)/i
@@ -148,13 +149,25 @@ function gatesFor(session) {
   return state
 }
 
-function executionProtocol() {
+function executionProtocol(hasEditTool) {
+  // When the deterministic mutation tool is mounted the prompt points at it
+  // instead of describing a manual recovery: the runtime already resolves the
+  // drift, so the instruction shrinks rather than grows.
+  const editRecovery = hasEditTool
+    ? {
+      transport: 'write the content with edit_apply, whose payload never crosses a shell',
+      edit: 'Use edit_apply: it resolves line-ending and trailing-whitespace drift itself, reports an ambiguous anchor instead of guessing, and returns the current text on a conflict — rebuild the anchor from that text in the same step rather than re-reading the file.',
+    }
+    : {
+      transport: 'move the payload out of band, base64-encoded and decoded into the file',
+      edit: 'Re-read the smallest current span, rebuild the patch against what is actually there, retry once. After a second miss change the mutation method — rewrite the region, or write the content to a file — instead of retrying exact strings.',
+    }
   return `## Execution Discipline
 Work in one loop, not many. Batch the evidence that separates the likely causes — real command output, the relevant file spans, searches, the governing config — into as few round trips as possible, and in Code Mode into one run_code call, keeping operations sequential only where one result decides the next. Then form one root-cause explanation, apply one coherent set of edits, and verify once with the cheapest decisive check. Re-plan when a result contradicts the explanation, not after every observation. Read a span before editing it; never patch from memory of an earlier state.
 
 Classify a tool failure before reacting; an execution failure is not evidence about the design or the science:
-- Transport or parser error (Expected ';', unterminated literal): the payload never ran, so nothing about the target program is evidence. Re-send once as one correctly escaped string; if that fails too, stop trying quote variants — each only shifts which characters break — and move the payload out of band, base64-encoded and decoded into the file.
-- old_string was not found: stale or inexact local state, not a design problem. Re-read the smallest current span, rebuild the patch against what is actually there, retry once. After a second miss change the mutation method — rewrite the region, or write the content to a file — instead of retrying exact strings.
+- Transport or parser error (Expected ';', unterminated literal): the payload never ran, so nothing about the target program is evidence. Re-send once as one correctly escaped string; if that fails too, stop trying quote variants — each only shifts which characters break — and ${editRecovery.transport}.
+- A rejected edit: stale or inexact local state, not a design problem. ${editRecovery.edit}
 - Non-zero exit: read the code first; grep 1, diff 1 and pytest 5 are answers, not breakage.
 - Missing dependency, permission, or process-lifecycle error: repair the environment, do not edit the program.
 
@@ -253,10 +266,10 @@ export function apply(ctx) {
       if (!existing.has(name)) sections.push({ name, order, text })
     }
 
-    if (gates.execution) add(EXECUTION_SECTION, 115, executionProtocol())
+    const hasTool = (toolName) => assembled.tools?.some(tool => tool?.name === toolName) === true
+    if (gates.execution) add(EXECUTION_SECTION, 115, executionProtocol(hasTool(EDIT_TOOL)))
     if (anyDeepGate) {
-      const hasJobTool = assembled.tools?.some(tool => tool?.name === JOB_TOOL) === true
-      add(ROUTER_SECTION, 116, routerProtocol(hasJobTool))
+      add(ROUTER_SECTION, 116, routerProtocol(hasTool(JOB_TOOL)))
     }
     if (gates.analysis) add(REASONING_SECTION, 117, reasoningProtocol())
     if (gates.active) add(CORE_SECTION, 118, coreProtocol())

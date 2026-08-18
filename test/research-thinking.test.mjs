@@ -332,8 +332,9 @@ test('the execution lane names each failure class and its recovery', async () =>
   assert.match(execution, /stop trying quote variants/)
   assert.match(execution, /base64-encoded/)
 
-  // stale-edit recovery is bounded
-  assert.match(execution, /old_string was not found/)
+  // stale-edit recovery is bounded. Without the deterministic mutation tool
+  // mounted, the lane still describes the manual recovery.
+  assert.match(execution, /A rejected edit: stale or inexact local state/)
   assert.match(execution, /After a second miss change the mutation method/)
 
   // exit codes are results
@@ -348,4 +349,41 @@ test('every deep lane carries the execution discipline with it', async () => {
     const names = sectionNames(await assembleFor('deep-performance', baseSections, [message(request)]))
     assert.ok(names.includes('research-thinking:execution'), `expected execution discipline for: ${request}`)
   }
+})
+
+test('the execution lane points at the deterministic mutation tool when it is mounted', async () => {
+  let listener
+  apply({ on(name, callback) { if (name === 'system-prompt/assemble') listener = callback } })
+  const assemble = (tools) => listener({}, {
+    agent: { session: { header: { agentPreset: 'deep-performance' }, events: [message('why is this test failing?')] } },
+  }, async () => ({ sections: baseSections, tools }))
+
+  const withEdit = await assemble([{ name: 'bash' }, { name: 'edit_apply' }])
+  const lane = withEdit.sections.find(item => item.name === 'research-thinking:execution').text
+  assert.match(lane, /Use edit_apply/)
+  assert.match(lane, /resolves line-ending and trailing-whitespace drift itself/)
+  assert.match(lane, /returns the current text on a conflict/)
+  // The runtime owns the recovery, so the prompt does not also describe it.
+  assert.doesNotMatch(lane, /After a second miss change the mutation method/)
+
+  const withoutEdit = await assemble([{ name: 'bash' }])
+  const fallback = withoutEdit.sections.find(item => item.name === 'research-thinking:execution').text
+  assert.doesNotMatch(fallback, /edit_apply/)
+  assert.match(fallback, /base64-encoded and decoded into the file/)
+})
+
+test('moving recovery into the runtime did not grow the prompt', async () => {
+  // Beta.6 adds capability through tools, not tokens: the execution lane with
+  // the deterministic tool mounted must not be larger than without it.
+  let listener
+  apply({ on(name, callback) { if (name === 'system-prompt/assemble') listener = callback } })
+  const laneFor = async (tools) => {
+    const result = await listener({}, {
+      agent: { session: { header: { agentPreset: 'deep-performance' }, events: [message('why is this test failing?')] } },
+    }, async () => ({ sections: baseSections, tools }))
+    return result.sections.find(item => item.name === 'research-thinking:execution').text.length
+  }
+  const withEdit = await laneFor([{ name: 'bash' }, { name: 'edit_apply' }])
+  const withoutEdit = await laneFor([{ name: 'bash' }])
+  assert.ok(withEdit <= withoutEdit + 80, `lane grew from ${withoutEdit} to ${withEdit}`)
 })

@@ -15,6 +15,10 @@ existing sessions remain resumable.
   diagnostic batch, one root cause, one coherent patch, one decisive
   verification, plus named recovery for the recurring tool-failure classes.
   Trivial requests still carry no protocol at all.
+- Resolves recoverable execution failures in the runtime rather than in prose:
+  edits report a status instead of raising, line-ending drift is repaired in
+  place, and a repeated failure family names the strategy that should replace
+  it (see Tool failures).
 - Recognises deep scientific questions by shape rather than by mode keywords,
   so "why does this fail to transfer?" or "can this gain be attributed to the
   module?" reach the reasoning lane without being announced as research.
@@ -72,16 +76,33 @@ strategy fails on a different subset, which is why re-quoting cycles instead of
 converging. Correct escaping survives all of them, and base64 round-trips every
 payload through both the JavaScript and shell layers.
 
-`old_string was not found` is stale local state, not a design problem: re-read
-the smallest current span, rebuild the patch, retry once, then change mutation
-method rather than retrying exact strings.
+A rejected edit is stale local state, not a design problem. `edit_apply`
+returns a status — `applied`, `conflict`, `ambiguous`, `stale`, `unchanged`,
+`missing`, `too_large`, `write_failure`, `verify_failure` — instead of raising.
+CRLF and trailing-whitespace drift is resolved in place when the match is
+unique; a non-unique anchor is reported rather than guessed; and a conflict
+carries the current text around the closest candidate line, so the anchor can
+be rebuilt without re-reading the file. Content travels as a tool argument and
+reaches disk base64-encoded, so quotes, backslashes, backticks, `${...}`,
+regex and Unicode need no escaping. The file is spliced by byte offset, so cost
+follows the patch size rather than the file size; the result is staged beside
+the target, moved into place, and verified by digest. Leading indentation is
+never normalised away, because that would change meaning in Python and YAML.
+
+A repeated failure is tracked as a family — its class and its target — not as
+an identical message. The same edit conflict with a different anchor, or the
+same command failing with a different error, is recognised as one strategy
+that is not working, and the notice names the transition that replaces it.
+Different commands, seeds and inputs stay distinct, and a success retires its
+family.
 
 A non-zero exit is a command-domain result. `bash` returns it as `exit code: N`
 with the output rather than raising, because `grep` 1, `diff` 1 and `pytest` 5
-are answers; only a spawn failure, a timeout kill, or a cancellation raises. An
-identical failure repeated in one session (same command, exit code, and first
-output line) is labelled in-band as no progress, with an instruction to change
-strategy rather than retry.
+are answers; only a spawn failure, a timeout kill, or a cancellation raises.
+The result also carries `exitCode`, `ok` and `failureClass` beside the text, so
+generated code can branch on the outcome instead of parsing it. Tool success
+and command success are separate facts: `ok` is false for a failing test and
+for a missing executable, and the class distinguishes them.
 
 ## Long-running work
 

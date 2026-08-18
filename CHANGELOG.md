@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.0-beta.6
+
+- Added `edit_apply`: mutation with a status instead of an exception. It
+  resolves the commonest recoverable edit failures itself — CRLF and
+  trailing-whitespace drift when the match is unique — reports an ambiguous
+  anchor rather than guessing, and returns the current text on a conflict so
+  the anchor can be rebuilt in the same step. Content crosses as a tool
+  argument and reaches disk base64-encoded, so no payload needs shell
+  escaping; the file is spliced by byte offset, moved into place, and verified
+  by digest in the same shell call.
+- Added a shared failure-family model across the bash and edit tools. A repeat
+  is now (class, target) rather than a byte-identical message, so the same
+  edit conflict with a different anchor and the same command with a different
+  error message are recognised, while different seeds, inputs and commands
+  stay distinct. A success retires its family.
+- Classified process outcomes: `process_nonzero`, `process_not_found`,
+  `process_permission`, `process_lifecycle`, and edit classes beside them,
+  each with the strategy transition that applies when it repeats twice.
+- `bash` results now carry `exitCode`, `ok` and `failureClass` beside the
+  unchanged `text`, so generated code can branch on the outcome instead of
+  parsing prose. `text` is byte-for-byte what it was.
+- Pointed the execution lane at the deterministic tool instead of describing a
+  manual recovery, keeping the prompt the same size.
+- Added a deterministic replay covering the eight motivating failure
+  scenarios: 21 to 10 execution-induced decision boundaries (52% fewer) with
+  completions unchanged.
+
 ## 0.1.0-beta.5
 
 - Added an execution lane for failure-shaped and implementation work: batch the

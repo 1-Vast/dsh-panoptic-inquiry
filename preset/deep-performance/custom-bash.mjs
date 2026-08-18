@@ -1,3 +1,5 @@
+import { classifyProcess, trackFailure, clearFailure, failureSignature, FAILURE_CLASS } from './failure-signature.mjs'
+
 export const name = 'custom-bash'
 export const inject = ['subprocess', 'tools']
 
@@ -12,42 +14,6 @@ const commandSchema = {
   },
   required: ['command'],
   additionalProperties: false,
-}
-
-/**
- * No-progress detector.
- *
- * A repair loop looks identical from the outside: the same command returns the
- * same failure with the same output. The model cannot see that it is repeating
- * itself without spending a reasoning turn to notice, so the runtime says it
- * in-band, at the exact point where the next decision is made. Only failures
- * are tracked — repeating a successful command is normal.
- */
-const repeatsBySession = new WeakMap()
-const MAX_TRACKED_SIGNATURES = 64
-
-export function noteRepeat(session, signature) {
-  if (session === undefined) return 1
-  let seen = repeatsBySession.get(session)
-  if (seen === undefined) {
-    seen = new Map()
-    repeatsBySession.set(session, seen)
-  }
-  const count = (seen.get(signature) ?? 0) + 1
-  seen.delete(signature)
-  seen.set(signature, count)
-  // Bounded: drop the least recently touched signature.
-  if (seen.size > MAX_TRACKED_SIGNATURES) seen.delete(seen.keys().next().value)
-  return count
-}
-
-/** Advisory appended to a repeated identical failure. */
-export function repeatNotice(count) {
-  if (count < 2) return ''
-  return `\n\n[no progress: identical failure ${count}x — same command, same exit code, same output.`
-    + ' Retrying or making another small variation of this approach will not change the result.'
-    + ' Change the strategy: different command shape, different mutation path, or fix the'
-    + ' environment/state this depends on.]'
 }
 
 export function apply(ctx, config) {
@@ -67,9 +33,20 @@ export function apply(ctx, config) {
     ].join('\n'),
     parameters: commandSchema,
     output: {
+      // `text` is unchanged from before, so existing callers and the rendered
+      // transcript are untouched. The scalars beside it let generated Code Mode
+      // branch on the outcome without parsing the string — and they are scalars
+      // on purpose: repeating stdout/stderr as separate fields would duplicate
+      // the whole output in context for no decision value.
       schema: {
         type: 'object', additionalProperties: false,
-        properties: { text: { type: 'string' } }, required: ['text'],
+        properties: {
+          text: { type: 'string' },
+          exitCode: { type: 'number' },
+          ok: { type: 'boolean' },
+          failureClass: { type: 'string' },
+        },
+        required: ['text', 'exitCode', 'ok'],
       },
       render: (_args, value) => [{ type: 'text', text: value.text }],
     },
@@ -107,26 +84,44 @@ export function apply(ctx, config) {
       const text = [stdout, stderr].filter(part => part.length > 0).join('\n')
       const code = outcome?.exitCode
 
+      const session = exec?.agent?.session
+      const cancelled = exec?.signal?.aborted === true
+
       // No exit code means the process never reported one: a timeout kill, a
       // cancellation, or a lifecycle failure. That is an execution failure, so
       // it stays an exception.
       if (!Number.isInteger(code)) {
-        const reason = exec?.signal?.aborted === true ? 'cancelled' : 'terminated without an exit code (timeout or external kill)'
-        throw new Error(text.length > 0 ? `${text}\n(${reason})` : reason)
+        const head = text.length > 0 ? `${text}\n` : ''
+        if (cancelled) throw new Error(`${head}(cancelled)`)
+        // A killed process is a lifecycle failure; repeating it is the loop
+        // that bash_job exists to end.
+        const killed = trackFailure(session, { failureClass: FAILURE_CLASS.processLifecycle, target: args.command })
+        throw new Error(`${head}(terminated without an exit code (timeout or external kill))${killed.notice}`)
       }
 
-      if (code === 0) return { text: text || 'exit code: 0 (no output)' }
+      if (code === 0) {
+        // Success retires the failure families this command accumulated, so a
+        // later unrelated failure starts its own count.
+        for (const failureClass of Object.values(FAILURE_CLASS)) {
+          clearFailure(session, failureSignature({ failureClass, target: args.command }))
+        }
+        return { text: text || 'exit code: 0 (no output)', exitCode: 0, ok: true }
+      }
 
-      const session = exec?.agent?.session
-      const signature = `${args.command}\u0000${code}\u0000${text.split('\n', 1)[0]}`
-      const notice = repeatNotice(noteRepeat(session, signature))
+      const failureClass = classifyProcess({ exitCode: code, cancelled, output: text })
+      const { notice } = trackFailure(session, { failureClass, target: args.command })
 
       // A non-zero exit is a COMMAND-DOMAIN RESULT, not an infrastructure
       // failure: grep 1 means no match, diff 1 means files differ, pytest 5
       // means nothing was collected. Throwing here forced the caller to
       // re-plan around an exception instead of reading the outcome, so the
       // code is reported in the result and the caller decides what it means.
-      return { text: `exit code: ${code}\n${text || '(no output)'}${notice}` }
+      return {
+        text: `exit code: ${code}\n${text || '(no output)'}${notice}`,
+        exitCode: code,
+        ok: false,
+        failureClass,
+      }
     },
   })
 }

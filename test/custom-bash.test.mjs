@@ -28,7 +28,14 @@ test('an expected non-zero exit is a result to read, not a tool error', async ()
   // grep 1 = no match. Raising here made the caller re-plan around an
   // exception instead of reading the outcome.
   const { tool } = mounted({ exitCode: 1 }, { stdout: '', stderr: '' })
-  assert.deepEqual(await tool.execute({ command: 'grep -r missing .' }, {}), { text: 'exit code: 1\n(no output)' })
+  const grep = await tool.execute({ command: 'grep -r missing .' }, {})
+  // `text` is byte-for-byte what it was before the structured fields existed:
+  // the rendered transcript and any caller reading `.text` are unaffected.
+  assert.equal(grep.text, 'exit code: 1\n(no output)')
+  // The scalars beside it let generated code branch without parsing the string.
+  assert.equal(grep.exitCode, 1)
+  assert.equal(grep.ok, false)
+  assert.equal(grep.failureClass, 'process_nonzero')
 
   const pytest = mounted({ exitCode: 5 }, { stdout: 'no tests ran', stderr: '' })
   const result = await pytest.tool.execute({ command: 'pytest' }, {})
@@ -55,7 +62,23 @@ test('the description tells the caller that a non-zero exit is a result', () => 
 
 test('a successful command returns its merged output', async () => {
   const { tool } = mounted({ exitCode: 0 }, { stdout: 'ok', stderr: 'warn' })
-  assert.deepEqual(await tool.execute({ command: 'true' }, {}), { text: 'ok\nwarn' })
+  assert.deepEqual(await tool.execute({ command: 'true' }, {}), { text: 'ok\nwarn', exitCode: 0, ok: true })
+})
+
+test('the outcome distinguishes tool success from command success', async () => {
+  const cases = [
+    { exitCode: 0, ok: true, failureClass: undefined },
+    { exitCode: 1, ok: false, failureClass: 'process_nonzero' },
+    { exitCode: 127, ok: false, failureClass: 'process_not_found' },
+    { exitCode: 126, ok: false, failureClass: 'process_permission' },
+  ]
+  for (const item of cases) {
+    const { tool } = mounted({ exitCode: item.exitCode }, { stdout: 'out', stderr: '' })
+    const result = await tool.execute({ command: `case-${item.exitCode}` }, {})
+    assert.equal(result.exitCode, item.exitCode)
+    assert.equal(result.ok, item.ok)
+    assert.equal(result.failureClass, item.failureClass)
+  }
 })
 
 test('the description sends long work to bash_job instead of shell backgrounding', () => {
@@ -82,8 +105,8 @@ test('an identical repeated failure is flagged in-band as no progress', async ()
   assert.doesNotMatch(first.text, /no progress/)
 
   const second = await tool.execute({ command: 'python run.py' }, exec)
-  assert.match(second.text, /no progress: identical failure 2x/)
-  assert.match(second.text, /Change the strategy/)
+  assert.match(second.text, /no progress: process_nonzero failed 2x/)
+  assert.match(second.text, /inspect the state this command depends on/)
 
   // A different command in the same session is not a repeat.
   const other = await tool.execute({ command: 'python other.py' }, exec)
@@ -130,4 +153,40 @@ test('only infrastructure failures raise: expected non-zero results stay results
   // 6 of 7 outcomes previously surfaced as tool errors; only the lifecycle
   // failure does now.
   assert.equal(raised, 1)
+})
+
+test('a repeat is a failure FAMILY, not a byte-identical message', async () => {
+  const exec = { agent: { session: { id: 'family' } } }
+  // Same command, different message each time — byte-identity would miss this.
+  const first = mounted({ exitCode: 1 }, { stdout: 'error at line 12', stderr: '' })
+  await first.tool.execute({ command: 'pytest tests/test_a.py' }, exec)
+  const second = mounted({ exitCode: 1 }, { stdout: 'error at line 47, different detail', stderr: '' })
+  const repeat = await second.tool.execute({ command: 'pytest tests/test_a.py' }, exec)
+  assert.match(repeat.text, /no progress: process_nonzero failed 2x/)
+})
+
+test('legitimate repeated experiments are never suppressed', async () => {
+  const exec = { agent: { session: { id: 'experiments' } } }
+  // Same failing script under different seeds is different work, not a loop.
+  for (const seed of [1, 2, 3]) {
+    const { tool } = mounted({ exitCode: 1 }, { stdout: 'accuracy 0.51', stderr: '' })
+    const result = await tool.execute({ command: `python train.py --seed ${seed}` }, exec)
+    assert.doesNotMatch(result.text, /no progress/, `seed ${seed} must not be treated as a repeat`)
+  }
+  // A different failure class on the same command is also its own family.
+  const missing = mounted({ exitCode: 127 }, { stdout: 'python: command not found', stderr: '' })
+  const notFound = await missing.tool.execute({ command: 'python train.py --seed 1' }, exec)
+  assert.doesNotMatch(notFound.text, /no progress/)
+  assert.equal(notFound.failureClass, 'process_not_found')
+})
+
+test('a success retires the failure family it belonged to', async () => {
+  const exec = { agent: { session: { id: 'recovery' } } }
+  const failing = mounted({ exitCode: 1 }, { stdout: 'boom', stderr: '' })
+  await failing.tool.execute({ command: 'npm test' }, exec)
+  const passing = mounted({ exitCode: 0 }, { stdout: 'all good', stderr: '' })
+  await passing.tool.execute({ command: 'npm test' }, exec)
+  // The next failure starts a fresh count instead of inheriting the old one.
+  const again = await failing.tool.execute({ command: 'npm test' }, exec)
+  assert.doesNotMatch(again.text, /no progress/)
 })

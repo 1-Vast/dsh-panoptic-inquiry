@@ -136,6 +136,22 @@
     jobsDir: .dsh-jobs
     maxLogChars: 2400
 
+# Mutation with structured outcomes. `str_replace_editor` below reports a stale
+# anchor as an exception, so the commonest recoverable edit failure — CRLF or
+# trailing-whitespace drift, or an anchor that is no longer unique — costs a
+# read, a retry and two reasoning turns to repair. `edit_apply` resolves that
+# drift in process, returns a status the caller can branch on, and carries the
+# current text back on a conflict. Content crosses as a tool argument and
+# reaches disk base64-encoded, so no payload needs shell escaping; the file is
+# spliced by byte offset and verified by digest in the same shell call.
+- id: edit-apply
+  name: ./edit-apply.mjs
+  disabled: !!js process.platform !== 'win32'
+  config:
+    bashPath: 'C:\Program Files\Git\bin\bash.exe'
+    timeoutMs: 60000
+    maxFileBytes: 2097152
+
 # ── minimal phase-1 filesystem ──────────────────────────────────────────────
 
 # Phase-1 editor as a direct top-level row: it reuses the host's sandboxed
