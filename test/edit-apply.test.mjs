@@ -12,6 +12,7 @@ import {
   nearestCandidate,
   normalizeForMatch,
   readCommand,
+  stagingId,
   writeCommands,
 } from '../preset/deep-performance/edit-apply.mjs'
 
@@ -62,18 +63,57 @@ test('a failed anchor reports the current text around the closest line', () => {
 })
 
 test('the write plan keeps every base64 argument under the verified argv ceiling', () => {
-  const small = writeCommands({ shellPath: 'a.py', start: 0, end: 1, replacementB64: 'x'.repeat(3000), digest: 'd' })
-  assert.equal(small.length, 1)
-  assert.match(small[0], /head -c 0 'a\.py'/)
-  assert.match(small[0], /tail -c \+2 'a\.py'/)
-  assert.match(small[0], /mv -f/)
-  assert.match(small[0], /sha256sum/)
+  const digest = 'a'.repeat(64)
+  const small = writeCommands({ shellPath: 'a.py', start: 0, end: 1, replacementB64: 'x'.repeat(3000), observedDigest: digest })
+  assert.equal(small.commands.length, 1)
+  // The splice must read the private SNAPSHOT, never the live target: reading
+  // `head` and `tail` off the target lets a concurrent replacement land between
+  // them and produces a file that is a mixture of two writers.
+  assert.match(small.commands[0], /cp -f 'a\.py' '[^']*\.src'/)
+  assert.match(small.commands[0], /head -c 0 '[^']*\.src'/)
+  assert.match(small.commands[0], /tail -c \+2 '[^']*\.src'/)
+  assert.doesNotMatch(small.commands[0], /head -c 0 'a\.py'/)
+  assert.doesNotMatch(small.commands[0], /tail -c \+2 'a\.py'/)
+  assert.match(small.commands[0], /mv -f/)
+  assert.match(small.commands[0], /sha256sum/)
 
-  const large = writeCommands({ shellPath: 'a.py', start: 0, end: 1, replacementB64: 'x'.repeat(50000), digest: 'd' })
-  assert.ok(large.length > 2, 'a large payload must be chunked')
-  for (const command of large) {
+  const large = writeCommands({ shellPath: 'a.py', start: 0, end: 1, replacementB64: 'x'.repeat(50000), observedDigest: digest })
+  assert.ok(large.commands.length > 2, 'a large payload must be chunked')
+  for (const command of large.commands) {
     assert.ok(command.length < 5000, `chunk command too long: ${command.length}`)
   }
+})
+
+test('the commit refuses a target that changed after the read', () => {
+  // The guard must use the digest observed during THIS edit's read, not an
+  // optional caller-supplied one, or a lost update is possible whenever the
+  // caller omits it.
+  const digest = 'b'.repeat(64)
+  const plan = writeCommands({ shellPath: 'a.py', start: 0, end: 1, replacementB64: 'eA==', observedDigest: digest })
+  const commit = plan.commands.at(-1)
+  assert.match(commit, new RegExp(`CURRENT=\\$\\(sha256sum 'a\\.py'`))
+  assert.match(commit, new RegExp(`!= '${digest}'`))
+  assert.match(commit, /echo "STALE \$CURRENT"; exit 9/)
+  // The guard must precede the rename, and clean up its own staging files.
+  assert.ok(commit.lastIndexOf('exit 9') < commit.indexOf('mv -f'), 'the stale check must run before the commit')
+  assert.match(commit, /rm -f '[^']*\.dsh-edit[^']*'/)
+  // The snapshot is validated too, so the bytes spliced are the bytes read.
+  assert.match(commit, /SOURCE=\$\(sha256sum '[^']*\.src'/)
+})
+
+test('two invocations never share a staging file', () => {
+  const digest = 'c'.repeat(64)
+  const seen = new Set()
+  for (let index = 0; index < 200; index += 1) {
+    const plan = writeCommands({ shellPath: 'a.py', start: 0, end: 1, replacementB64: 'eA==', observedDigest: digest })
+    assert.equal(seen.has(plan.tempPath), false, 'staging path collided')
+    assert.notEqual(plan.tempPath, plan.payloadPath)
+    // Staging must sit beside the target so the rename stays on one volume.
+    assert.ok(plan.tempPath.startsWith('a.py.'))
+    seen.add(plan.tempPath)
+  }
+  assert.equal(seen.size, 200)
+  assert.match(stagingId(), /^[0-9a-z]+-[0-9a-z]+-[0-9a-f]{12}$/)
 })
 
 test('the read command guards size before reading', () => {

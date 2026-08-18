@@ -121,6 +121,42 @@ export function clearFailure(session, signature) {
   if (seen !== undefined) seen.delete(signature)
 }
 
+/** Process classes, whose history is invalidated by a successful mutation. */
+const PROCESS_CLASSES = new Set([
+  FAILURE_CLASS.processNonZero,
+  FAILURE_CLASS.processNotFound,
+  FAILURE_CLASS.processPermission,
+  FAILURE_CLASS.processLifecycle,
+  FAILURE_CLASS.processSpawn,
+])
+
+/**
+ * Forget process-failure history for one session.
+ *
+ * A successful mutation changes the state every earlier command ran against,
+ * so `pytest` failing before an edit and `pytest` failing after it are not the
+ * same strategy repeated — they are two different experiments that happen to
+ * share a command line. Without this, the second failure would be reported as
+ * no progress and the caller would be told to stop doing the right thing.
+ *
+ * Edit families are deliberately NOT cleared here: repeated conflicts against
+ * a file are still one failing strategy, and `edit_apply` retires those itself
+ * when an edit actually lands.
+ */
+export function clearProcessFailures(session) {
+  const seen = session === undefined || session === null ? undefined : failuresBySession.get(session)
+  if (seen === undefined) return 0
+  let removed = 0
+  for (const key of [...seen.keys()]) {
+    const [failureClass] = key.split(' :: ')
+    if (PROCESS_CLASSES.has(failureClass)) {
+      seen.delete(key)
+      removed += 1
+    }
+  }
+  return removed
+}
+
 /**
  * The in-band notice. Silent on the first failure — one failure deserves a
  * cheap correction, not a strategy change.

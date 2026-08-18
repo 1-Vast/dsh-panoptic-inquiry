@@ -18,7 +18,7 @@ existing sessions remain resumable.
 - Resolves recoverable execution failures in the runtime rather than in prose:
   edits report a status instead of raising, line-ending drift is repaired in
   place, and a repeated failure family names the strategy that should replace
-  it (see Tool failures).
+  it (see Tool failures and Mutation safety and its limits).
 - Recognises deep scientific questions by shape rather than by mode keywords,
   so "why does this fail to transfer?" or "can this gain be attributed to the
   module?" reach the reasoning lane without being announced as research.
@@ -78,23 +78,53 @@ payload through both the JavaScript and shell layers.
 
 A rejected edit is stale local state, not a design problem. `edit_apply`
 returns a status — `applied`, `conflict`, `ambiguous`, `stale`, `unchanged`,
-`missing`, `too_large`, `write_failure`, `verify_failure` — instead of raising.
+`missing`, `read_failure`, `too_large`, `write_failure`, `verify_failure` —
+instead of raising.
 CRLF and trailing-whitespace drift is resolved in place when the match is
 unique; a non-unique anchor is reported rather than guessed; and a conflict
 carries the current text around the closest candidate line, so the anchor can
 be rebuilt without re-reading the file. Content travels as a tool argument and
 reaches disk base64-encoded, so quotes, backslashes, backticks, `${...}`,
-regex and Unicode need no escaping. The file is spliced by byte offset, so cost
-follows the patch size rather than the file size; the result is staged beside
-the target, moved into place, and verified by digest. Leading indentation is
-never normalised away, because that would change meaning in Python and YAML.
+regex and Unicode need no escaping. Leading indentation is never normalised
+away, because that would change meaning in Python and YAML, and a replaced
+span keeps its own line-ending convention so a CRLF file does not become mixed.
+
+## Mutation safety and its limits
+
+`edit_apply` is confined to the session workspace. Paths are resolved against
+the session directory and checked by canonical containment, not by string
+prefix, so `D:\work2` is not inside `D:\work`; traversal and absolute paths
+outside the root are refused before anything is read. Widening this is a
+deliberate configuration decision (`allowOutsideWorkspace`), never a side
+effect of the Bash lane being able to reach the filesystem.
+
+**This is not a host filesystem sandbox.** Containment is lexical: symlinks and
+NTFS junctions are not resolved, so a link inside the workspace pointing
+outside it is not detected. The tool runs on the same unsandboxed Git Bash lane
+as `bash`, and adds no privilege that lane does not already have.
+
+Each edit builds its replacement from a private snapshot of the file, in
+staging files unique to that invocation, and commits with `mv -f` after
+re-checking that the target still holds the bytes the edit was built from. That
+combination means a concurrent edit cannot produce a file that is a mixture of
+two writers, and an edit built against superseded content is refused rather
+than committed.
+
+It is **not** a transactional or race-free editor. The check-to-rename window
+is narrow but real: an external writer that replaces the target inside that
+window is not detected, and the losing writer then reports `verify_failure`
+rather than `stale`. Both are truthful non-success reports — what cannot happen
+is an `applied` result describing content the file does not hold. Verification
+compares the committed file's digest against the intended content.
 
 A repeated failure is tracked as a family — its class and its target — not as
 an identical message. The same edit conflict with a different anchor, or the
 same command failing with a different error, is recognised as one strategy
 that is not working, and the notice names the transition that replaces it.
 Different commands, seeds and inputs stay distinct, and a success retires its
-family.
+family. A successful mutation also retires process-failure history for the
+session: rerunning a test after fixing the code is a new experiment, not a
+repeat of the failed one.
 
 A non-zero exit is a command-domain result. `bash` returns it as `exit code: N`
 with the output rather than raising, because `grep` 1, `diff` 1 and `pytest` 5

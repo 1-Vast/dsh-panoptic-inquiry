@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.1.0-beta.6.1
+
+Release hardening. No new capabilities; correctness, concurrency, data
+integrity, path safety, and claim calibration.
+
+- Corrected the replay baseline. The previous comparison raised on every
+  non-zero exit, which was Beta.4 behaviour, so it overstated the Beta.5 cost
+  of `grep no match` and `command not found`. The replay now runs the ACTUAL
+  Beta.5 bash tool, extracted from commit a719bef into a test fixture. The
+  measured reduction is 19 to 10 execution-induced decision boundaries (47%),
+  not the 21 to 10 (52%) previously reported.
+- Fixed a data-corruption defect in `edit_apply` found by a new concurrency
+  test: the splice read `head` and `tail` from the live target, so a
+  concurrent replacement landing between the two reads produced a file that
+  was a mixture of two writers. The splice now builds from a private snapshot
+  whose digest is checked before use.
+- Added stale-write protection that does not depend on the caller. The digest
+  observed during this edit's own read is re-checked immediately before the
+  rename; a target that changed in between is refused with `stale` and nothing
+  is written. `expected_sha256` remains an additional caller-side guard.
+- Gave every invocation unique staging files (process, counter and random
+  entropy), so concurrent edits of one target cannot share or overwrite each
+  other's temporary artifacts. Staging is removed on success and on every
+  failure path.
+- Fixed non-BMP Unicode corruption. Byte offsets were derived by summing
+  per-code-unit lengths, which is wrong across surrogate pairs (emoji,
+  `𝛼`, `𐐷`). Character offsets and byte offsets are now derived separately and
+  each used where it is correct.
+- Confined `edit_apply` to the session workspace by default, with canonical
+  containment rather than prefix matching, so `D:\work2` is not treated as
+  inside `D:\work`. Symlinks and junctions are not resolved; this is
+  documented, not claimed as a sandbox.
+- A successful mutation now retires process-failure history for the session,
+  so a test rerun after a fix is not misreported as a repeated no-progress
+  strategy.
+- Preserved the line-ending convention of a replaced span, so editing a CRLF
+  file with an LF replacement no longer leaves it mixed.
+- Corrected the `nearestCandidate` documentation: it returns the first anchor
+  line that still occurs, not a longest matching run.
+
 ## 0.1.0-beta.6
 
 - Added `edit_apply`: mutation with a status instead of an exception. It
@@ -24,8 +64,8 @@
 - Pointed the execution lane at the deterministic tool instead of describing a
   manual recovery, keeping the prompt the same size.
 - Added a deterministic replay covering the eight motivating failure
-  scenarios: 21 to 10 execution-induced decision boundaries (52% fewer) with
-  completions unchanged.
+  scenarios. (The figure first reported here was measured against an incorrect
+  Beta.5 baseline; see 0.1.0-beta.6.1 for the corrected result.)
 
 ## 0.1.0-beta.5
 

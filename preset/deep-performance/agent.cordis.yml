@@ -143,7 +143,12 @@
 # drift in process, returns a status the caller can branch on, and carries the
 # current text back on a conflict. Content crosses as a tool argument and
 # reaches disk base64-encoded, so no payload needs shell escaping; the file is
-# spliced by byte offset and verified by digest in the same shell call.
+# spliced from a private snapshot and verified by digest in the same shell call.
+#
+# Confined to the session workspace by canonical path containment. That
+# confinement is lexical — symlinks and junctions are not resolved — so it is
+# not equivalent to the host filesystem sandbox. `allowOutsideWorkspace: true`
+# would remove the restriction and is deliberately left unset.
 - id: edit-apply
   name: ./edit-apply.mjs
   disabled: !!js process.platform !== 'win32'

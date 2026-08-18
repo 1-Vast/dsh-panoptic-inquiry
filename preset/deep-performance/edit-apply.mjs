@@ -23,13 +23,15 @@
  *    quoting, and reaches disk base64-encoded, which round-trips every payload
  *    class the transport benchmark covers;
  *  - only the REPLACEMENT crosses argv. The file is spliced by byte offset
- *    (`head -c` + payload + `tail -c +n`), so cost follows the patch size, not
- *    the file size — a 1 MB file takes one shell call;
+ *    (`head -c` + payload + `tail -c +n`) from a private snapshot, so a large
+ *    file costs one copy plus one shell call rather than a chunked rewrite;
  *  - argv has a hard practical ceiling here (a single base64 argument above
  *    ~5 KB fails, and above ~40 KB the process does not start), so a large
  *    payload is appended in verified-size chunks;
  *  - the new file is built beside the target and moved into place with `mv -f`,
- *    so a failed decode or write leaves the original intact;
+ *    so a failed decode or write leaves the original intact. The target digest
+ *    is re-checked immediately before the rename, so an edit built against
+ *    content that has since changed is refused rather than committed;
  *  - `sha256sum` runs in the same shell call as the move, so verification adds
  *    no round trip.
  *
@@ -39,8 +41,9 @@
  * `custom-bash`. The host `str_replace_editor` stays registered and unchanged.
  */
 
-import { createHash } from 'node:crypto'
-import { FAILURE_CLASS, trackFailure, clearFailure, failureSignature } from './failure-signature.mjs'
+import { createHash, randomUUID } from 'node:crypto'
+import { isAbsolute, relative, resolve } from 'node:path'
+import { FAILURE_CLASS, trackFailure, clearFailure, clearProcessFailures, failureSignature } from './failure-signature.mjs'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'edit-apply'
@@ -55,6 +58,50 @@ const CHUNK_B64_CHARS = 4000
 const TEMP_SUFFIX = '.dsh-edit'
 /** Context returned around a failed match so the caller can repair in place. */
 const SPAN_CONTEXT_LINES = 3
+
+/**
+ * Staging identity. Two invocations must never share a staging file, or one
+ * edit's payload can be committed over another's target. A millisecond stamp
+ * alone collides under concurrency, so the id carries process, counter and
+ * random entropy and stays in the shell-safe alphabet.
+ */
+let stagingCounter = 0
+export function stagingId() {
+  stagingCounter += 1
+  const random = randomUUID().replace(/-/g, '').slice(0, 12)
+  return `${process.pid.toString(36)}-${stagingCounter.toString(36)}-${random}`
+}
+
+/**
+ * Where this tool may write.
+ *
+ * The Git Bash lane can reach the whole filesystem, so confinement is enforced
+ * here rather than assumed. Containment is CANONICAL, not prefix matching:
+ * `D:\work2` is not inside `D:\work`. Comparison is case-insensitive on
+ * Windows, where the filesystem is.
+ *
+ * LIMITATION: this is lexical. Symlinks and NTFS junctions are not resolved,
+ * so a link inside the workspace that points outside it is not detected. This
+ * is not equivalent to a host filesystem sandbox.
+ */
+export function resolveTarget(rawPath, cwd, allowOutside = false) {
+  if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {
+    return { ok: false, reason: 'path must be a non-empty string' }
+  }
+  const root = typeof cwd === 'string' && cwd.length > 0 ? resolve(cwd) : undefined
+  const absolute = root === undefined ? resolve(rawPath) : resolve(root, rawPath)
+  if (allowOutside === true || root === undefined) return { ok: true, absolute }
+
+  const insensitive = process.platform === 'win32'
+  const from = insensitive ? root.toLowerCase() : root
+  const to = insensitive ? absolute.toLowerCase() : absolute
+  const rel = relative(from, to)
+  // '' means the workspace root itself; '..' anywhere means outside it.
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    return { ok: false, reason: `path is outside the workspace root ${root}`, absolute }
+  }
+  return { ok: true, absolute }
+}
 
 /** Native Windows paths cross into the shell domain with forward slashes. */
 export function toShellPath(value) {
@@ -169,9 +216,14 @@ export function spanContext(content, start, end) {
 }
 
 /**
- * Best current candidate for a failed anchor: the longest run of the anchor's
- * own lines that still exists, so the caller sees what the file actually holds
- * rather than being told only that its string was absent.
+ * Best current candidate for a failed anchor: the FIRST non-blank line of the
+ * anchor that still occurs in the file, returned with its surrounding lines,
+ * so the caller sees what the file actually holds rather than being told only
+ * that its string was absent.
+ *
+ * This is a first-match heuristic, not a longest-run or similarity search. It
+ * is reported as such because an inflated claim about recovery quality is
+ * worse than a modest one: the caller must still read the returned span.
  */
 export function nearestCandidate(content, oldString) {
   const wanted = normalizeForMatch(oldString).split('\n').filter(line => line.trim().length > 0)
@@ -203,38 +255,72 @@ export function readCommand(shellPath, maxBytes) {
  * One command for an ordinary patch; extra append commands only when the
  * payload exceeds the verified argv ceiling.
  */
-export function writeCommands({ shellPath, start, end, replacementB64, digest }) {
+export function writeCommands({ shellPath, start, end, replacementB64, observedDigest, staging = stagingId() }) {
   const quoted = shellQuote(shellPath)
-  const temp = shellQuote(`${shellPath}${TEMP_SUFFIX}`)
-  const payload = shellQuote(`${shellPath}${TEMP_SUFFIX}.b64`)
+  const tempPath = `${shellPath}${TEMP_SUFFIX}-${staging}`
+  const snapshotPath = `${tempPath}.src`
+  const payloadPath = `${tempPath}.b64`
+  const temp = shellQuote(tempPath)
+  const snapshot = shellQuote(snapshotPath)
+  const payload = shellQuote(payloadPath)
+  const discard = `rm -f ${temp} ${snapshot} ${payload}`
   const commands = []
 
-  if (replacementB64.length <= CHUNK_B64_CHARS) {
-    commands.push([
-      `head -c ${start} ${quoted} > ${temp}`,
-      `printf %s ${shellQuote(replacementB64)} | base64 -d >> ${temp}`,
-      `tail -c +${end + 1} ${quoted} >> ${temp}`,
-      `mv -f ${temp} ${quoted}`,
-      `sha256sum ${quoted} | cut -d' ' -f1`,
-    ].join(' && '))
-    return commands
+  // Stage the payload first when it exceeds the verified argv ceiling.
+  const chunked = replacementB64.length > CHUNK_B64_CHARS
+  if (chunked) {
+    commands.push(`: > ${payload}`)
+    for (let at = 0; at < replacementB64.length; at += CHUNK_B64_CHARS) {
+      commands.push(`printf %s ${shellQuote(replacementB64.slice(at, at + CHUNK_B64_CHARS))} >> ${payload}`)
+    }
   }
 
-  // Large replacement: stage the base64 in verified-size pieces, decode once.
-  commands.push(`: > ${payload}`)
-  for (let at = 0; at < replacementB64.length; at += CHUNK_B64_CHARS) {
-    commands.push(`printf %s ${shellQuote(replacementB64.slice(at, at + CHUNK_B64_CHARS))} >> ${payload}`)
-  }
+  const insert = chunked
+    ? `base64 -d < ${payload} >> ${temp}`
+    : `printf %s ${shellQuote(replacementB64)} | base64 -d >> ${temp}`
+
   commands.push([
-    `head -c ${start} ${quoted} > ${temp}`,
-    `base64 -d < ${payload} >> ${temp}`,
-    `tail -c +${end + 1} ${quoted} >> ${temp}`,
+    'set -e',
+    // Build from an immutable SNAPSHOT, never from the live target. Splicing
+    // `head`/`tail` directly off the target lets a concurrent replacement land
+    // between the two reads, which produces a file that is a mixture of two
+    // writers rather than either one.
+    `cp -f ${quoted} ${snapshot}`,
+    `SOURCE=$(sha256sum ${snapshot} | cut -d' ' -f1)`,
+    `if [ "$SOURCE" != ${shellQuote(observedDigest)} ]; then ${discard}; echo "STALE $SOURCE"; exit 9; fi`,
+    `head -c ${start} ${snapshot} > ${temp}`,
+    insert,
+    `tail -c +${end + 1} ${snapshot} >> ${temp}`,
+    // Re-check immediately before the rename. This narrows the lost-update
+    // window to the gap between this check and `mv`; it is not a filesystem
+    // compare-and-swap, and an external writer inside that gap is not detected.
+    `CURRENT=$(sha256sum ${quoted} | cut -d' ' -f1)`,
+    `if [ "$CURRENT" != ${shellQuote(observedDigest)} ]; then ${discard}; echo "STALE $CURRENT"; exit 9; fi`,
     `mv -f ${temp} ${quoted}`,
-    `rm -f ${payload}`,
+    `rm -f ${snapshot} ${payload}`,
     `sha256sum ${quoted} | cut -d' ' -f1`,
-  ].join(' && '))
-  void digest
-  return commands
+  ].join('\n'))
+
+  return { commands, staging, tempPath, snapshotPath, payloadPath }
+}
+
+/** Remove this invocation's staging files; never touches the target. */
+export function cleanupCommand({ tempPath, snapshotPath, payloadPath }) {
+  return `rm -f ${shellQuote(tempPath)} ${shellQuote(snapshotPath)} ${shellQuote(payloadPath)}`
+}
+
+/**
+ * Keep a replacement consistent with the line endings of the span it replaces.
+ * A CRLF file edited with an LF replacement otherwise becomes mixed-EOL, which
+ * shows up as spurious whole-file diffs. Only applied when the replaced span
+ * is unambiguously CRLF and the replacement carries no CR of its own, so
+ * deliberate content is never rewritten.
+ */
+export function matchLineEndings(originalSpan, replacement) {
+  if (!originalSpan.includes('\r\n')) return replacement
+  if (replacement.includes('\r')) return replacement
+  if (!replacement.includes('\n')) return replacement
+  return replacement.replace(/\n/g, '\r\n')
 }
 
 /** Register the `edit_apply` tool. */
@@ -244,6 +330,9 @@ export function apply(ctx, config) {
   const maxFileBytes = Number.isSafeInteger(config?.maxFileBytes) && config.maxFileBytes > 0
     ? config.maxFileBytes
     : DEFAULT_MAX_FILE_BYTES
+  // Confined to the session workspace by default. Opening this up is a
+  // deliberate deployment decision, never an accident of the Bash lane.
+  const allowOutsideWorkspace = config?.allowOutsideWorkspace === true
 
   const run = async (command, exec) => {
     const shell = await ctx.subprocess.resolveExecutable(bashPath, undefined, exec?.signal)
@@ -311,7 +400,13 @@ export function apply(ctx, config) {
     timeoutMs,
     async execute(args, exec) {
       const session = exec?.agent?.session
-      const shellPath = toShellPath(args.path)
+      const cwd = exec?.agent?.session?.header?.cwd
+      const located = resolveTarget(args.path, cwd, allowOutsideWorkspace)
+      if (!located.ok) {
+        // Refused before any read, so the tool stays inside its declared scope.
+        throw new Error(`edit_apply refused ${args.path}: ${located.reason}`)
+      }
+      const shellPath = toShellPath(located.absolute)
       const target = shellPath
       const fail = (failureClass, status, text, extra = {}) => {
         const { notice, count } = trackFailure(session, { failureClass, target })
@@ -337,7 +432,8 @@ export function apply(ctx, config) {
 
       const read = await run(readCommand(shellPath, maxFileBytes), exec)
       if (read.exitCode !== 0) {
-        return fail(FAILURE_CLASS.readFailure, 'missing', `cannot read ${args.path}: ${read.stderr.trim() || `exit ${read.exitCode}`}`)
+        // Present but unreadable is a read failure, not an absent file.
+        return fail(FAILURE_CLASS.readFailure, 'read_failure', `cannot read ${args.path}: ${read.stderr.trim() || `exit ${read.exitCode}`}`)
       }
       const [header, ...rest] = read.stdout.split('\n')
       if (header.trim() === 'MISSING') {
@@ -355,8 +451,8 @@ export function apply(ctx, config) {
           { sha256: currentSha })
       }
 
-      let start
-      let end
+      let charStart
+      let charEnd
       let replacement
       let tolerant = false
 
@@ -364,8 +460,8 @@ export function apply(ctx, config) {
         if (args.content === content) {
           return succeed({ status: 'unchanged', applied: false, text: `${args.path} already has this content`, sha256: currentSha })
         }
-        start = 0
-        end = Buffer.byteLength(content, 'utf8')
+        charStart = 0
+        charEnd = content.length
         replacement = args.content
       } else {
         if (args.old_string === args.new_string) {
@@ -387,40 +483,59 @@ export function apply(ctx, config) {
             near === undefined ? {} : { current_span: near.text, current_span_line: near.firstLine })
         }
         tolerant = found.kind === 'tolerant'
-        // Offsets from `locate` index the decoded string; the splice needs bytes.
-        start = Buffer.byteLength(content.slice(0, found.start), 'utf8')
-        end = Buffer.byteLength(content.slice(0, found.end), 'utf8')
-        replacement = args.new_string
+        charStart = found.start
+        charEnd = found.end
+        // A CRLF span replaced with LF-only text would leave the file mixed.
+        replacement = matchLineEndings(content.slice(charStart, charEnd), args.new_string)
       }
 
-      const expected = content.slice(0, byteToCharIndex(content, start)) + replacement + content.slice(byteToCharIndex(content, end))
+      // Two coordinate systems, each used where it is correct: character
+      // offsets index the JavaScript string, byte offsets drive the shell
+      // splice. Converting between them one code unit at a time corrupts
+      // surrogate pairs, so each is derived from the string directly.
+      const byteStart = Buffer.byteLength(content.slice(0, charStart), 'utf8')
+      const byteEnd = Buffer.byteLength(content.slice(0, charEnd), 'utf8')
+      const expected = content.slice(0, charStart) + replacement + content.slice(charEnd)
       const expectedSha = createDigest(expected)
-      const commands = writeCommands({
+      const plan = writeCommands({
         shellPath,
-        start,
-        end,
+        start: byteStart,
+        end: byteEnd,
         replacementB64: Buffer.from(replacement, 'utf8').toString('base64'),
-        digest: expectedSha,
+        observedDigest: currentSha,
       })
 
       let digestOutput = ''
-      for (const command of commands) {
+      for (const command of plan.commands) {
         const step = await run(command, exec)
+        if (step.exitCode === 9 || step.stdout.includes('STALE ')) {
+          // The target changed between the read and the commit. The guard
+          // removed the staging file and did not replace the target.
+          const now = (step.stdout.match(/STALE ([0-9a-f]{64})/) ?? [])[1] ?? 'unknown'
+          return fail(FAILURE_CLASS.editStale, 'stale',
+            `${args.path} changed after this edit was built (its digest is now ${now}); nothing was written. Re-read the file and rebuild the patch.`,
+            { sha256: now })
+        }
         if (step.exitCode !== 0) {
+          await run(cleanupCommand(plan), exec)
           return fail(FAILURE_CLASS.writeFailure, 'write_failure',
-            `writing ${args.path} failed: ${step.stderr.trim() || `exit ${step.exitCode}`}. The original file was left unchanged.`)
+            `writing ${args.path} failed before the replacement was committed: ${step.stderr.trim() || `exit ${step.exitCode}`}. The original file is unchanged.`)
         }
         digestOutput = step.stdout
       }
 
       const observed = digestOutput.trim().split('\n').pop()?.trim() ?? ''
       if (observed !== expectedSha) {
+        await run(cleanupCommand(plan), exec)
         return fail(FAILURE_CLASS.verifyFailure, 'verify_failure',
-          `${args.path} was written but its digest does not match the intended content (expected ${expectedSha}, found ${observed}). Re-read the file before editing again.`,
+          `${args.path} was replaced but its digest does not match the intended content (expected ${expectedSha}, found ${observed}). DISK STATE HAS CHANGED: re-read the file before editing again.`,
           { sha256: observed })
       }
 
-      const line = lineAt(Buffer.from(content, 'utf8'), start)
+      // A completed mutation changes the state every earlier command ran
+      // against, so their failure history no longer describes this workspace.
+      clearProcessFailures(session)
+      const line = lineAt(Buffer.from(content, 'utf8'), byteStart)
       return succeed({
         status: 'applied',
         applied: true,
@@ -431,17 +546,6 @@ export function apply(ctx, config) {
       })
     },
   })
-}
-
-/** Byte offset -> character index in a decoded string. */
-function byteToCharIndex(content, byteOffset) {
-  if (byteOffset <= 0) return 0
-  let bytes = 0
-  for (let index = 0; index < content.length; index += 1) {
-    if (bytes >= byteOffset) return index
-    bytes += Buffer.byteLength(content[index], 'utf8')
-  }
-  return content.length
 }
 
 /** sha256 of a UTF-8 string, matching `sha256sum` over the same bytes. */
