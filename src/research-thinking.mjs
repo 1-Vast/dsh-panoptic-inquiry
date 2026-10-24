@@ -32,18 +32,47 @@ const DEEP_MARKER = /root\s+cause|attribut(?:e|ed|ion|able)|falsif\w*|counter-?e
 // qualify and keeps the zero-overhead path.
 const EXECUTION_TRIGGER = /\berrors?\b|\bexception\b|traceback|stack\s+trace|\bfail(?:s|ed|ing|ure|ures)?\b|\bcrash\w*|\bbug\b|\bbroken\b|does(?:n't|\s+not)\s+work|not\s+working|(?:^|help\s+me\s+|please\s+|let's\s+)debug\b|\bdebug(?:ging)?\s+(?:this|that|the|it|why|my|our)\b|\bimplement\w*|\brefactor\w*|\bmigrat\w*|\bport\s+to\b|make\s+(?:the\s+)?tests?\s+pass|报错|错误|异常|失败|崩溃|不工作|无法运行|跑不起来|调试|排查|实现|重构|迁移/i
 
-// Collaboration must be asked for. Bare "parallel"/"concurrent" are training
-// vocabulary ("tensor parallel"), not a request for more agents.
-const TEAM_TRIGGER = /多(?:智能体|\s*agent)|协同|分工|并行(?:调研|研究|探索|检索|审查|推进|执行)|并发(?:调研|研究)|长期自主|全局审查|multi[-\s]?agent|agent\s+teams?|sub-?agents?|parallel\s+(?:agents?|workers?|researchers?|investigations?|tracks?|lanes?|teams?)|long[-\s]?running\s+autonomous|global\s+audit|\bdelegate\b/i
-const CONTINUATION_TRIGGER = /^(?:\s*(?:继续|继续研究|继续分析|深入|展开|接着|补充|进一步|还要|还需|再看|同时考虑|并且)(?:\s|[。.!！?？]|$)|\s*(?:go\s+on|continue|dig\s+deeper|also|additionally)\b)|(?:.*(?:上述|前述|研究|论文|实验|数据|模型|机制|方向|假设|证据|基线|消融|复现|泄露|污染|统计|评审|审查|创新).*)/i
-const RESET_TRIGGER = /退出(?:深研|研究)|结束(?:深研|研究)|回到普通(?:模式)?|普通模式|新任务|换个(?:问题|任务|话题)|另一个(?:问题|任务|话题)|stop\s+(?:deep\s+)?research|normal\s+mode|new\s+(?:task|topic)/i
+// Match requests, not research topics. A prohibition takes precedence within
+// one message; a later explicit request can enable collaboration again.
+const TEAM_SUBJECT = /多(?:智能体|\s*agent)|子智能体|multi[-\s]?agent|agent\s+teams?|sub-?agents?|parallel\s+(?:agents?|workers?|researchers?|teams?)/i
+const TEAM_REQUEST = /(?:^|[。.!?！？;；,，:：\n])\s*(?:(?:please|can\s+you|could\s+you)\s+)*(?:use|enable|start|spawn|ask|run)\s+(?:(?:a|an|the|two|three|\d+)\s+)?$|(?:^|[。.!?！？;；,，:：\n])\s*(?:请|帮我|请帮我)?(?:用|使用|启用|调用|启动|让)\s*$/i
+const TEAM_ACTIVITY = /(?:^|[。.!?！？;；,，:：\n])\s*(?:请)?进行\s*$/
+const TEAM_DIRECT = /(?:^|[。.!?！？;；,，:\n])\s*(?:please\s+)?delegate\b|(?:^|[。.!?！？;；,，:\n])\s*(?:请|帮我)?(?:并行|并发)(?:调研|研究|探索|检索|审查|推进|执行)/i
+const TEAM_DENY = /(?:不要|不用|无需|禁止|停止|取消|别)[^。.!?！？;；,，\n]{0,20}(?:多智能体|子智能体|协同|分工|并行|并发)|\b(?:do\s+not|don't|never|without|stop|disable|no)\b[^。.!?！？;；,，\n]{0,40}(?:multi[-\s]?agent|agent\s+teams?|sub-?agents?|delegat\w*)|\b(?:work\s+alone|single[-\s]agent\s+only)\b|(?:只用|仅用)单智能体|(?:你自己|独自)(?:完成|处理|研究)/i
+const CONTINUATION_TRIGGER = /^(?:\s*(?:继续|继续研究|继续分析|深入|展开|接着|补充|进一步|还要|还需|再看|同时考虑|并且)|\s*(?:go\s+on|continue|dig\s+deeper|also|additionally)\b)|(?:.*(?:上述|前述|研究|论文|实验|数据|模型|机制|方向|假设|证据|基线|消融|复现|泄露|污染|统计|评审|审查|创新).*)/i
+const EXIT_TRIGGER = /^\s*(?:请\s*|please\s+)?(?:退出(?:深研|研究)|结束(?:深研|研究)|回到普通(?:模式)?|普通模式|stop\s+(?:deep\s+)?research\b|normal\s+mode\b)/i
+const NEW_TASK = /^\s*(?:请\s*|please\s+)?(?:新任务|换个(?:问题|任务|话题)|另一个(?:问题|任务|话题)|new\s+(?:task|topic))\s*(?:[：:。.!！\n]\s*|$)/i
 
 const presetState = new WeakMap()
 const gateState = new WeakMap()
 
-function isBootstrapAssembly(assembly) {
-  const names = (assembly.sections ?? []).map(section => section?.name)
-  return names.length === 1 && (names[0] === 'deployment:persona' || names[0] === 'persona')
+// Quoted documents are evidence, not routing controls. This deliberately only
+// recognises Markdown fences and block quotes, not arbitrary natural language.
+function routingText(text) {
+  let fence
+  return text.split(/\r?\n/).filter(line => {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined
+      return false
+    }
+    if (marker) {
+      fence = marker[1]
+      return false
+    }
+    return !/^\s*>/.test(line)
+  }).join('\n')
+}
+
+function collaborationIntent(text) {
+  if (TEAM_DENY.test(text)) return 'disable'
+  if (TEAM_DIRECT.test(text)) return 'enable'
+  for (const match of text.matchAll(new RegExp(TEAM_SUBJECT, 'gi'))) {
+    const prefix = text.slice(0, match.index)
+    if (TEAM_REQUEST.test(prefix)) return 'enable'
+    if (TEAM_ACTIVITY.test(prefix) && /^\s*(?:协同|协作|分工)/.test(text.slice(match.index + match[0].length))) return 'enable'
+  }
+  return 'inherit'
 }
 
 function textContent(content) {
@@ -81,6 +110,8 @@ export function needsReasoning(text) {
 }
 
 export function classifyIntent(text) {
+  text = routingText(text)
+  const collaboration = collaborationIntent(text)
   const innovation = INNOVATION_TRIGGER.test(text)
   const audit = AUDIT_TRIGGER.test(text) || innovation
   const core = CORE_TRIGGER.test(text) || innovation
@@ -95,7 +126,8 @@ export function classifyIntent(text) {
     audit,
     analysis,
     execution,
-    parallel: TEAM_TRIGGER.test(text),
+    parallel: collaboration === 'enable',
+    collaboration,
     any: core || innovation || audit || analysis || execution,
   }
 }
@@ -117,31 +149,42 @@ function gatesFor(session) {
   if (session === undefined) return { active: false, analysis: false, execution: false, innovation: false, audit: false, parallel: false }
   const events = session.events ?? []
   let state = gateState.get(session)
-  if (state === undefined) state = { next: 0, active: false, analysis: false, execution: false, innovation: false, audit: false, parallel: false }
+  if (state === undefined) state = { next: 0, preset: session.header?.agentPreset, active: false, analysis: false, execution: false, innovation: false, audit: false, parallel: false }
 
   for (; state.next < events.length; state.next += 1) {
     const event = events[state.next]
+    if (event?.type === 'agent-preset/selected') {
+      if (state.preset !== event.data?.agentPreset) clear(state)
+      state.preset = event.data?.agentPreset
+      continue
+    }
+    if (state.preset !== SUPPORTED_PRESET) continue
     if (!isAcceptedIntentMessage(session, event)) continue
-    const text = textContent(event.data?.content)
+    let text = routingText(textContent(event.data?.content))
 
-    if (RESET_TRIGGER.test(text)) {
+    if (EXIT_TRIGGER.test(text)) {
       clear(state)
       continue
     }
+    if (NEW_TASK.test(text)) {
+      clear(state)
+      text = text.replace(NEW_TASK, '')
+    }
 
     const intent = classifyIntent(text)
+    if (intent.collaboration === 'disable') state.parallel = false
+    if (intent.collaboration === 'enable') state.parallel = true
     if (intent.any) {
       state.active = state.active || intent.core
       state.analysis = state.analysis || intent.analysis
       state.execution = state.execution || intent.execution
       state.innovation = state.innovation || intent.innovation
       state.audit = state.audit || intent.audit
-      state.parallel = state.parallel || intent.parallel
       continue
     }
 
     // Any engaged lane survives a short refinement, not only the literature one.
-    if (engaged(state) && CONTINUATION_TRIGGER.test(text)) continue
+    if (engaged(state) && (CONTINUATION_TRIGGER.test(text) || intent.collaboration !== 'inherit')) continue
     clear(state)
   }
 
@@ -255,9 +298,6 @@ export function apply(ctx) {
 
     const gates = gatesFor(session)
     const anyDeepGate = gates.active || gates.analysis || gates.innovation || gates.audit
-    const anyGate = anyDeepGate || gates.execution
-    if (isBootstrapAssembly(assembled) && !anyGate) return assembled
-
     const collaborationNeeded = gates.parallel && (session?.header?.delegationDepth ?? 0) === 0
     const inheritedSections = (assembled.sections ?? []).filter(section => section?.name !== TEAM_USAGE_SECTION)
     const existing = new Set(inheritedSections.map(section => section?.name))

@@ -48,6 +48,37 @@ existing sessions remain resumable.
 This project structures work and reduces avoidable prompt and tool overhead.
 It does not claim model-quality, latency, benchmark, or Fable5 equivalence.
 
+## Task boundaries and collaboration
+
+Routing follows the current task, with explicit controls in English or Chinese:
+
+| Request | Effect |
+| --- | --- |
+| `New task: code review` / `新任务：做代码审查` | Clears previous lanes and collaboration permission, then routes the new request. |
+| `Use subagents` / `请使用子智能体` | Enables team tools for the active task, including when sent as a short follow-up. |
+| `Do not use subagents; continue research` / `不要使用多智能体，继续研究` | Hides team tools while preserving the current research lanes. |
+| `Continue` / `继续检查这些结果` | Keeps the current task and its collaboration setting. |
+| `Stop research` / `退出深研` | Clears the research lanes and collaboration permission. |
+
+A collaboration prohibition wins over an enable request in the same message.
+A later explicit enable request can restore access. Revocation changes the
+tools exposed on the next prompt assembly; it does not cancel already-running
+agents or jobs. Switching to a different preset also clears routing state, so
+returning to `deep-performance` starts fresh.
+
+Mentioning multi-agent systems as a paper topic, requesting a global audit,
+or asking for long autonomous work does not by itself enable team tools.
+Markdown fenced code and block quotes are excluded from routing decisions.
+This is a conservative, deterministic text router, not a general natural-language
+permission parser or a security boundary. Use the explicit phrases above when
+control matters; arbitrary paraphrases and inline quotations are not guaranteed
+to be distinguished. Root sessions continue to ignore plugin reports and skill
+injections as sources of routing instructions.
+
+Conversation replay tests check both incremental prompt assembly and a cold
+replay of the same events. These tests verify routing behavior without calling
+a language model; they do not measure research quality or token-cost savings.
+
 ## Evidence policy
 
 The primary evidence pool is limited to recognized top-tier or flagship

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Made task boundaries actionable: `New task: ...` and `新任务：...` clear
+  previous routing state and classify the new request instead of discarding it.
+- Added reversible collaboration controls during an active task. Standalone
+  enable and disable requests preserve the research lanes, and a prohibition
+  takes precedence within the same message.
+- Require a collaboration request rather than a topic mention; global audits
+  and long autonomous work no longer implicitly expose AgentTeams tools.
+- Exclude Markdown fences and block quotes from routing and recognise Chinese
+  continuation prefixes without requiring a space after `继续`.
+- Clear routing state at preset changes and filter unrequested team tools even
+  in the minimal bootstrap assembly.
+- Added conversation-level regressions and cold/incremental replay checks.
+  No model-quality or cost improvement is inferred from these deterministic tests.
+
 ## 0.1.0-beta.6.2
 
 Compaction policy only. No execution, reasoning, routing, or tooling changes.
